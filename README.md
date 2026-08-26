@@ -62,7 +62,7 @@ TIME_STRIKE_CONFIG=/path/to/config.toml target/release/time-strike
 TIME_STRIKE_STATE=/path/to/state.json target/release/time-strike
 ```
 
-`TIME_STRIKE_STATE` enables persistence directly. The legacy names `PRIME_TIME_CONFIG` and `PRIME_TIME_STATE` are still accepted for migration compatibility. Prefer the `TIME_STRIKE_*` names in new deployments. Do not put secrets in the config file.
+`TIME_STRIKE_STATE` enables persistence directly. Do not put secrets in the config file.
 
 ## MCP client configuration
 
@@ -194,7 +194,7 @@ Example compact `tick` result:
 - **Protocol parse errors:** keep stdout untouched; do not pipe logs or banners into stdout. Use one newline-delimited JSON-RPC message per line.
 - **No active task:** call `start_task` first, or pass an explicit `task_id` to subsequent tools.
 - **Persistence lock errors:** only one long-lived Time Strike process should open a given state file. Use a different `TIME_STRIKE_STATE` path for an independent session.
-- **Old configuration:** `PRIME_TIME_CONFIG` and `PRIME_TIME_STATE` remain accepted. New client entries should use the `time-strike` server name and `time-strike` binary.
+
 
 ## Security and privacy
 
@@ -224,10 +224,6 @@ python tests/benchmark_transport.py
 ```
 
 A prior local 10,000-operation baseline measured the core policy at approximately 1.48 µs mean and local MCP stdio `tick` at approximately 75.87 µs mean. Treat these as development-host reference numbers, not a performance guarantee; hardware, Rust, OS scheduling, and client framing affect results. Criterion benchmarks are in [`benches/tick.rs`](benches/tick.rs).
-
-## Migration and compatibility
-
-Time Strike replaces the earlier `prime-time-mcp` branding. The MCP tool names and request/response protocol remain unchanged. Update the package import to `time_strike`, the executable to `time-strike`, and client server IDs to `time-strike` (Hermes uses the identifier `time_strike` in its CLI example). The legacy environment variables are accepted as described above. Existing JSON state can be reused by setting `TIME_STRIKE_STATE` to its path; no state file is copied or migrated automatically.
 
 ## Contributing
 

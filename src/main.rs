@@ -191,7 +191,6 @@ impl TimeStrikeServer {
             None
         };
         let state_path = std::env::var_os("TIME_STRIKE_STATE")
-            .or_else(|| std::env::var_os("PRIME_TIME_STATE"))
             .map(PathBuf::from)
             .or(configured_state);
         let manager = if let Some(path) = state_path {
@@ -517,9 +516,7 @@ fn schedule_name(schedule: ScheduleStatus) -> &'static str {
 }
 
 fn load_config() -> Result<AppConfig, String> {
-    let Some(path) =
-        std::env::var_os("TIME_STRIKE_CONFIG").or_else(|| std::env::var_os("PRIME_TIME_CONFIG"))
-    else {
+    let Some(path) = std::env::var_os("TIME_STRIKE_CONFIG") else {
         return Ok(AppConfig::default());
     };
     let path = PathBuf::from(path);

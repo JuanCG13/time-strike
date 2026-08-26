@@ -24,7 +24,7 @@ def request(proc, request_id, method, params):
     return response["result"]
 
 
-with tempfile.TemporaryDirectory(prefix="prime-time-contention-") as directory:
+with tempfile.TemporaryDirectory(prefix="time-strike-contention-") as directory:
     state = Path(directory) / "state.json"
     env = os.environ | {"TIME_STRIKE_STATE": str(state)}
     first = subprocess.Popen(
