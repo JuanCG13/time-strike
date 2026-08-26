@@ -16,6 +16,30 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 - Optional atomic JSON persistence; downtime is charged during recovery.
 - Compatible with Claude Desktop, Claude Code, Codex, Hermes Agent, and generic MCP stdio clients.
 
+## See it in action: a five-minute chat task
+
+Imagine asking an AI coding agent for a useful result under a hard deadline:
+
+> **You:** Review this pull request and give me the three highest-risk findings. You have five minutes.
+>
+> **Agent:** I’ll time-box the review and reserve time to validate the findings.
+>
+> `Time Strike · start_task(budget_seconds: 300)`
+>
+> **Agent:** I inspected the changed authentication and database paths. Time Strike says I’m on schedule, with 168 seconds available for new work.
+>
+> `Time Strike · tick() → mode: converge, must_converge: true`
+>
+> **Agent:** I’ll stop exploring unrelated files, confirm the three strongest findings, and prepare the answer.
+>
+> `Time Strike · tick() → mode: validate, must_validate: true`
+>
+> **Agent:** Validation complete. Here are the three risks, each with file evidence and a recommended fix.
+>
+> `Time Strike · finish_task() → deadline_met: true`
+
+Without Time Strike, the agent only knows that you mentioned “five minutes.” With Time Strike, the harness receives concrete signals about remaining time, action size, convergence, validation, and when to stop. Time Strike does not perform the review itself—it keeps the agent’s workflow aligned with your deadline.
+
 ## Architecture
 
 ```text
