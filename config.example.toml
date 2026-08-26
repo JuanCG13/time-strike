@@ -1,0 +1,11 @@
+[persistence]
+enabled = false
+# path = "~/.time-strike/state.json"
+
+[defaults]
+# Omit either value to use duration-adaptive defaults.
+validation_reserve_percent = 10
+finalization_reserve_percent = 5
+
+[output]
+compact = true

@@ -1,0 +1,33 @@
+[package]
+name = "time-strike"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "A deterministic, thread-safe MCP time-budget controller for autonomous agents"
+license = "MIT"
+repository = "https://github.com/JuanCG13/time-strike"
+
+[lib]
+name = "time_strike"
+path = "src/lib.rs"
+
+[[bin]]
+name = "time-strike"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+fs2 = "0.4"
+rmcp = { version = "3.1.4", features = ["server", "macros", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+toml = "0.8"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "tick"
+harness = false

@@ -1,0 +1,5 @@
+/target/
+/.evidence/
+*.tmp
+*.log
+.time-strike/

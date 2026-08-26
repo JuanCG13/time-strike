@@ -1,0 +1,44 @@
+# Architecture
+
+## Boundaries
+
+`time-strike` does one thing: converts deadlines into deterministic temporal control signals. It has no network client, shell access, repository access, LLM, database or web UI.
+
+```text
+MCP stdio (rmcp)
+  -> five thin tool adapters
+  -> TaskManager (RwLock<HashMap>)
+  -> pure evaluate_time_policy()
+  -> monotonic Clock (Instant)
+  -> optional SnapshotStore (atomic JSON)
+```
+
+## Time sources
+
+- Runtime: `Instant` through `MonotonicClock`.
+- Tests: deterministic `ManualClock`.
+- Persistence: wall-clock milliseconds only to charge process downtime.
+- Recovery: `base_elapsed + new Instant`; a restart cannot reset elapsed time.
+
+## Policy
+
+`evaluate_time_policy` is pure, deterministic and O(1). Inputs are total, elapsed, optional progress/ETA and optional reserve overrides. Outputs are mode, schedule, usable work, reserves, next check, maximum new action and stop/convergence flags.
+
+The required temporal mode/schedule is automatic. The older core `Mode` and `SchedulePhase` types describe internal work-chunk profiles used by embedding tests; they are not the MCP temporal contract and are intentionally not client-configurable.
+
+Finalization has two concepts:
+
+- accounting reserve: reported validation + finalization seconds;
+- preventive trigger: may enter `finalize` earlier (up to 10%/5 minutes) to protect delivery.
+
+## Children
+
+A child budget is clamped to the parent's currently available work budget. Active child reservations are tracked on the parent and released when a child finishes. Parent completion rejects active children unless forced.
+
+## Persistence
+
+`FileStore` holds an exclusive advisory lock for its lifetime, fails closed for a second writer, writes unique `0600` temporary files, flushes, atomically renames and syncs the parent directory where supported. A failed save rolls the in-memory mutation back. Writes occur on lifecycle operations, not through a polling watchdog. Snapshot v2 stores elapsed state and wall-clock save time.
+
+## Concurrency and idle behavior
+
+State uses short `RwLock` critical sections. No busy loop or polling thread exists; idle CPU is effectively zero. Deadlines are evaluated lazily on calls and during recovery.
