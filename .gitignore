@@ -2,4 +2,11 @@
 /.evidence/
 *.tmp
 *.log
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
 .time-strike/
+.prime-time-mcp/
