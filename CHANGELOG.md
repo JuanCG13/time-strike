@@ -1,0 +1,38 @@
+# Changelog
+
+All notable improvements to Time Strike are recorded here.
+
+## [Unreleased]
+
+- No unreleased changes yet.
+
+## [0.2.0] - 2026-08-27
+
+### Added
+
+- Mandatory compact execution plan through the first `checkpoint`.
+- A single `directive` field with explicit actions: plan, execute, split, converge, validate, finalize, or stop.
+- Automatic planning budget and planning-time reporting.
+- Persistent checkpoint ETA and `plan_submitted` state.
+- Explicit `replan` support for legitimate progress or ETA resets.
+- Real overrun metrics in `finish_task`.
+
+### Changed
+
+- Oversized actions now return `split_action` using `current_action_estimated_seconds`.
+- Budget increases are disabled by default unless `TIME_STRIKE_ALLOW_BUDGET_INCREASE=1` is set by the host.
+- Validation and finalization reserves now have minimums of 5% and 3%.
+- Progress cannot decrease unless `replan=true`.
+- `tick` no longer persists the complete task snapshot on every call.
+- `next_check_seconds` never exceeds the remaining budget.
+- MCP server metadata and instructions now identify Time Strike `0.2.0`.
+
+### Compatibility
+
+- The original five MCP tools remain unchanged: `start_task`, `tick`, `checkpoint`, `adjust_task`, and `finish_task`.
+- New protocol fields are additive, and persisted state uses Serde defaults for recovery compatibility.
+
+## [0.1.0] - 2026-08-22
+
+- Initial deterministic MCP time-budget controller.
+- Monotonic task timing, checkpoints, adjustable budgets, parent-child reservations, persistence, and deadline policy.
