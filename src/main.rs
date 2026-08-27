@@ -87,6 +87,10 @@ struct CheckpointInput {
     completed: Vec<String>,
     note: Option<String>,
     #[serde(default)]
+    plan_complete: bool,
+    #[serde(default)]
+    replan: bool,
+    #[serde(default)]
     verbose: bool,
 }
 
@@ -115,6 +119,9 @@ struct StartOutput {
     mode: String,
     next_check_seconds: f64,
     clamped: bool,
+    planning_budget_seconds: f64,
+    directive: String,
+    max_new_action_seconds: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
 }
@@ -134,6 +141,9 @@ struct TickOutput {
     must_validate: bool,
     must_finalize: bool,
     must_stop: bool,
+    directive: String,
+    must_plan: bool,
+    planning_seconds_remaining: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     action_fits: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -165,6 +175,7 @@ struct FinishOutput {
     elapsed_seconds: f64,
     budget_seconds: f64,
     unused_seconds: f64,
+    overrun_seconds: f64,
     budget_used_percent: f64,
     checkpoints: u64,
     deadline_met: bool,
@@ -178,6 +189,7 @@ struct TimeStrikeServer {
     default_validation_percent: Option<f64>,
     default_finalization_percent: Option<f64>,
     default_verbose: bool,
+    allow_budget_increase: bool,
     #[allow(dead_code)] // read by rmcp-generated routing code
     tool_router: ToolRouter<Self>,
 }
@@ -207,6 +219,13 @@ impl TimeStrikeServer {
             default_validation_percent: config.defaults.validation_reserve_percent,
             default_finalization_percent: config.defaults.finalization_reserve_percent,
             default_verbose: !config.output.compact,
+            allow_budget_increase: std::env::var("TIME_STRIKE_ALLOW_BUDGET_INCREASE")
+                .map(|value| {
+                    value == "1"
+                        || value.eq_ignore_ascii_case("true")
+                        || value.eq_ignore_ascii_case("yes")
+                })
+                .unwrap_or(false),
             tool_router: Self::tool_router(),
         })
     }
@@ -245,11 +264,15 @@ impl TimeStrikeServer {
             .as_ref()
             .and_then(|checkpoint| checkpoint.progress)
             .map(|progress| progress * 100.0);
+        let stored_eta = view
+            .last_checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.estimated_remaining_work_secs);
         evaluate_time_policy(PolicyInput {
             total_secs: view.budget_secs,
             elapsed_secs: view.elapsed_secs,
             progress_percent: progress_percent.or(stored_progress),
-            estimated_remaining_work_secs: eta_seconds,
+            estimated_remaining_work_secs: eta_seconds.or(stored_eta),
             validation_reserve_percent: Self::reserve_percent(view, "validation_reserve_percent"),
             finalization_reserve_percent: Self::reserve_percent(
                 view,
@@ -264,21 +287,39 @@ impl TimeStrikeServer {
         action_seconds: Option<f64>,
         verbose: bool,
     ) -> TickOutput {
+        let plan_required = !view.plan_submitted;
+        let effective_max_action = if plan_required {
+            0.0
+        } else {
+            decision.max_new_action_secs
+        };
+        let action_fits = action_seconds.map(|seconds| seconds <= effective_max_action);
         TickOutput {
             remaining_seconds: round3(decision.remaining_secs),
             elapsed_seconds: round3(view.elapsed_secs),
             remaining_percent: round3(decision.remaining_percent),
-            mode: format!("{:?}", decision.mode).to_ascii_lowercase(),
+            mode: if plan_required {
+                "plan".into()
+            } else {
+                format!("{:?}", decision.mode).to_ascii_lowercase()
+            },
             schedule: schedule_name(decision.schedule).to_string(),
             usable_work_seconds: round3(decision.usable_work_secs),
             reserved_seconds: round3(decision.reserved_secs),
-            max_new_action_seconds: round3(decision.max_new_action_secs),
+            max_new_action_seconds: round3(effective_max_action),
             next_check_seconds: round3(decision.next_check_secs),
             must_converge: decision.must_converge,
             must_validate: decision.must_validate,
             must_finalize: decision.must_finalize,
             must_stop: decision.must_stop,
-            action_fits: action_seconds.map(|seconds| seconds <= decision.max_new_action_secs),
+            directive: directive(plan_required, &decision, action_fits).to_string(),
+            must_plan: plan_required,
+            planning_seconds_remaining: round3(if plan_required {
+                (planning_budget_secs(view.budget_secs) - view.elapsed_secs).max(0.0)
+            } else {
+                0.0
+            }),
+            action_fits,
             reason: verbose.then(|| decision.reason.to_string()),
         }
     }
@@ -286,7 +327,9 @@ impl TimeStrikeServer {
 
 #[tool_router(router = tool_router)]
 impl TimeStrikeServer {
-    #[tool(description = "Start a monotonic time budget; returns compact initial control signals")]
+    #[tool(
+        description = "Start a hard time budget. The first required action is submitting a compact plan through checkpoint."
+    )]
     async fn start_task(
         &self,
         Parameters(input): Parameters<StartInput>,
@@ -334,15 +377,18 @@ impl TimeStrikeServer {
         Ok(Json(StartOutput {
             task_id,
             remaining_seconds: round3(decision.remaining_secs),
-            mode: format!("{:?}", decision.mode).to_ascii_lowercase(),
-            next_check_seconds: round3(decision.next_check_secs),
+            mode: "plan".into(),
+            next_check_seconds: round3(planning_budget_secs(outcome.task.budget_secs)),
             clamped: outcome.clamped,
+            planning_budget_seconds: round3(planning_budget_secs(outcome.task.budget_secs)),
+            directive: "submit_plan".into(),
+            max_new_action_seconds: 0.0,
             reason: (input.verbose || self.default_verbose).then(|| decision.reason.to_string()),
         }))
     }
 
     #[tool(
-        description = "Central O(1) budget check: phase, schedule, reserves, action cap, next check and stop signals"
+        description = "Return the mandatory next directive, remaining budget, maximum action duration, and deadline pressure."
     )]
     async fn tick(
         &self,
@@ -367,7 +413,9 @@ impl TimeStrikeServer {
         )))
     }
 
-    #[tool(description = "Record compact progress/ETA state and return updated temporal pressure")]
+    #[tool(
+        description = "Submit the initial plan or record progress and ETA. The first checkpoint must use plan_complete=true."
+    )]
     async fn checkpoint(
         &self,
         Parameters(input): Parameters<CheckpointInput>,
@@ -390,6 +438,9 @@ impl TimeStrikeServer {
                 task_id: task_id.clone(),
                 note,
                 progress: input.progress_percent.map(|progress| progress / 100.0),
+                estimated_remaining_work_secs: input.estimated_remaining_work_seconds,
+                plan_complete: input.plan_complete,
+                replan: input.replan,
             })
             .map_err(|error| error.to_string())?;
         let decision = Self::policy(
@@ -441,6 +492,9 @@ impl TimeStrikeServer {
         } else {
             current.budget_secs - input.remove_seconds.unwrap_or_default()
         };
+        if new_total > current.budget_secs && !self.allow_budget_increase {
+            return Err("budget increase is disabled; only the host may grant more time".into());
+        }
         let outcome = self
             .manager
             .adjust_task(AdjustTaskRequest::new(&task_id).with_budget(new_total))
@@ -470,8 +524,10 @@ impl TimeStrikeServer {
                 force: input.force,
             })
             .map_err(|error| error.to_string())?;
+        let actual_elapsed = outcome.actual_elapsed_secs;
+        let overrun = outcome.overrun_secs;
         let view = outcome.task;
-        let unused = (view.budget_secs - view.elapsed_secs).max(0.0);
+        let unused = (view.budget_secs - actual_elapsed).max(0.0);
         let is_active = self
             .active_task
             .read()
@@ -485,25 +541,52 @@ impl TimeStrikeServer {
                 .map_err(|_| "active task lock poisoned".to_string())? = None;
         }
         Ok(Json(FinishOutput {
-            elapsed_seconds: round3(view.elapsed_secs),
+            elapsed_seconds: round3(actual_elapsed),
             budget_seconds: round3(view.budget_secs),
             unused_seconds: round3(unused),
-            budget_used_percent: round3(view.elapsed_secs / view.budget_secs * 100.0),
+            overrun_seconds: round3(overrun),
+            budget_used_percent: round3(actual_elapsed / view.budget_secs * 100.0),
             checkpoints: view.checkpoints,
-            deadline_met: view.elapsed_secs <= view.budget_secs,
+            deadline_met: overrun <= f64::EPSILON,
         }))
     }
 }
 
 #[tool_handler(
     name = "time-strike",
-    version = "0.1.0",
-    instructions = "Call start_task once. Use tick before/after costly work and when next_check_seconds elapses. Obey must_converge, must_validate, must_finalize, and must_stop."
+    version = "0.2.0",
+    instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint with plan_complete=true, a compact plan, and an ETA before any costly action. Call tick before and after searches, edits, tests, delegation, and tool calls. Never start work longer than max_new_action_seconds; split it. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
 )]
 impl ServerHandler for TimeStrikeServer {}
 
 fn round3(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
+}
+
+fn planning_budget_secs(total_secs: f64) -> f64 {
+    (total_secs * 0.05).clamp(2.0, 60.0).min(total_secs * 0.15)
+}
+
+fn directive(
+    plan_required: bool,
+    decision: &PolicyDecision,
+    action_fits: Option<bool>,
+) -> &'static str {
+    if decision.must_stop {
+        "stop"
+    } else if plan_required {
+        "submit_plan"
+    } else if action_fits == Some(false) {
+        "split_action"
+    } else if decision.must_finalize {
+        "finalize"
+    } else if decision.must_validate {
+        "validate"
+    } else if decision.must_converge {
+        "converge_required_only"
+    } else {
+        "execute"
+    }
 }
 
 fn schedule_name(schedule: ScheduleStatus) -> &'static str {

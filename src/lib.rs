@@ -394,6 +394,12 @@ pub struct CheckpointRequest {
     pub note: Option<String>,
     #[serde(default)]
     pub progress: Option<f64>,
+    #[serde(default)]
+    pub estimated_remaining_work_secs: Option<f64>,
+    #[serde(default)]
+    pub plan_complete: bool,
+    #[serde(default)]
+    pub replan: bool,
 }
 
 impl CheckpointRequest {
@@ -402,6 +408,9 @@ impl CheckpointRequest {
             task_id: task_id.into(),
             note: None,
             progress: None,
+            estimated_remaining_work_secs: None,
+            plan_complete: false,
+            replan: false,
         }
     }
 }
@@ -468,6 +477,10 @@ pub struct CheckpointRecord {
     pub elapsed_secs: f64,
     pub note: Option<String>,
     pub progress: Option<f64>,
+    #[serde(default)]
+    pub estimated_remaining_work_secs: Option<f64>,
+    #[serde(default)]
+    pub plan_complete: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -489,6 +502,7 @@ pub struct TaskView {
     pub last_checkpoint: Option<CheckpointRecord>,
     pub children: Vec<String>,
     pub metadata: HashMap<String, String>,
+    pub plan_submitted: bool,
 }
 
 impl TaskView {
@@ -530,6 +544,8 @@ pub struct AdjustTaskOutcome {
 pub struct FinishTaskOutcome {
     pub task: TaskView,
     pub reason: Option<String>,
+    pub actual_elapsed_secs: f64,
+    pub overrun_secs: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -587,6 +603,8 @@ pub struct PersistedTask {
     pub ticks: u64,
     pub checkpoints: u64,
     pub last_checkpoint: Option<CheckpointRecord>,
+    #[serde(default)]
+    pub plan_submitted: bool,
 }
 
 /// Optional state backend. Implementations must make `save` atomic from the
@@ -614,6 +632,7 @@ struct Task {
     ticks: u64,
     checkpoints: u64,
     last_checkpoint: Option<CheckpointRecord>,
+    plan_submitted: bool,
 }
 
 impl Task {
@@ -733,6 +752,7 @@ impl TaskManager {
             ticks: 0,
             checkpoints: 0,
             last_checkpoint: None,
+            plan_submitted: false,
         };
         tasks.insert(task_id.clone(), task);
         if let Some(parent_id) = parent_id {
@@ -755,7 +775,6 @@ impl TaskManager {
     pub fn tick(&self, request: TickRequest) -> Result<TickOutcome, TaskError> {
         validate_id(&request.task_id)?;
         let mut tasks = self.tasks.write().expect("task lock poisoned");
-        let before = tasks.clone();
         let now = self.clock.now();
         let (tick, phase_changed) = {
             let task = tasks
@@ -777,10 +796,7 @@ impl TaskManager {
             }
             (task.ticks, phase_changed)
         };
-        self.persist_or_rollback(&mut tasks, before, now)?;
-        let task = tasks
-            .get(&request.task_id)
-            .expect("task checked before persistence");
+        let task = tasks.get(&request.task_id).expect("task checked");
         let view = self.view_locked(task, &tasks, now);
         Ok(TickOutcome {
             phase_changed,
@@ -803,6 +819,13 @@ impl TaskManager {
                 "checkpoint progress must be between 0 and 1".into(),
             ));
         }
+        if let Some(eta) = request.estimated_remaining_work_secs
+            && (!eta.is_finite() || eta <= 0.0)
+        {
+            return Err(TaskError::Invalid(
+                "estimated_remaining_work_secs must be finite and > 0".into(),
+            ));
+        }
         let mut tasks = self.tasks.write().expect("task lock poisoned");
         let before = tasks.clone();
         let now = self.clock.now();
@@ -813,13 +836,55 @@ impl TaskManager {
             if matches!(task.status, TaskStatus::Finished) {
                 return Err(TaskError::NotActive(request.task_id));
             }
+            if !task.plan_submitted && !request.plan_complete {
+                return Err(TaskError::Invalid(
+                    "first checkpoint must submit a compact execution plan".into(),
+                ));
+            }
+            if request.plan_complete {
+                let note_is_valid = request
+                    .note
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|note| note.len() >= 20);
+                if !note_is_valid {
+                    return Err(TaskError::Invalid(
+                        "plan checkpoint requires a compact plan in note".into(),
+                    ));
+                }
+                if !request
+                    .estimated_remaining_work_secs
+                    .is_some_and(|eta| eta.is_finite() && eta > 0.0)
+                {
+                    return Err(TaskError::Invalid(
+                        "plan checkpoint requires estimated_remaining_work_secs > 0".into(),
+                    ));
+                }
+            }
+            if let Some(new_progress) = request.progress
+                && let Some(previous_progress) = task
+                    .last_checkpoint
+                    .as_ref()
+                    .and_then(|checkpoint| checkpoint.progress)
+                && new_progress + EPSILON < previous_progress
+                && !request.replan
+            {
+                return Err(TaskError::Invalid(
+                    "progress cannot decrease unless replan=true".into(),
+                ));
+            }
             task.checkpoints = task.checkpoints.saturating_add(1);
             let checkpoint = CheckpointRecord {
                 sequence: task.checkpoints,
                 elapsed_secs: task.runtime_secs(now),
                 note: request.note,
                 progress: request.progress,
+                estimated_remaining_work_secs: request.estimated_remaining_work_secs,
+                plan_complete: request.plan_complete,
             };
+            if request.plan_complete {
+                task.plan_submitted = true;
+            }
             task.last_checkpoint = Some(checkpoint.clone());
             checkpoint
         };
@@ -973,7 +1038,7 @@ impl TaskManager {
             if matches!(task.status, TaskStatus::Finished) {
                 return Err(TaskError::NotActive(request.task_id));
             }
-            let runtime = task.runtime_secs(now).min(task.budget_secs);
+            let runtime = task.runtime_secs(now);
             let parent_id = task.parent_id.clone();
             let budget = task.budget_secs;
             task.finished_elapsed_secs = Some(runtime);
@@ -996,6 +1061,8 @@ impl TaskManager {
         Ok(FinishTaskOutcome {
             task: view,
             reason: request.reason,
+            actual_elapsed_secs: runtime,
+            overrun_secs: (runtime - budget).max(0.0),
         })
     }
 
@@ -1060,6 +1127,7 @@ impl TaskManager {
             last_checkpoint: task.last_checkpoint.clone(),
             children,
             metadata: task.metadata.clone(),
+            plan_submitted: task.plan_submitted,
         }
     }
 
@@ -1096,6 +1164,7 @@ impl TaskManager {
                 ticks: task.ticks,
                 checkpoints: task.checkpoints,
                 last_checkpoint: task.last_checkpoint.clone(),
+                plan_submitted: task.plan_submitted,
             })
             .collect();
         persisted.sort_by(|a, b| a.task_id.cmp(&b.task_id));
@@ -1207,6 +1276,7 @@ impl TaskManager {
                     ticks: persisted.ticks,
                     checkpoints: persisted.checkpoints,
                     last_checkpoint: persisted.last_checkpoint,
+                    plan_submitted: persisted.plan_submitted,
                 },
             );
         }

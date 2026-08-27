@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use time_strike::{
     AdjustTaskRequest, CheckpointRequest, FileStore, FinishTaskRequest, ManualClock, MemoryStore,
     Mode, PersistedState, Schedule, SchedulePhase, SnapshotStore, StartTaskRequest, TaskError,
@@ -110,8 +113,11 @@ fn checkpoint_and_recovery_preserve_runtime_without_extra_time() {
     manager
         .checkpoint(CheckpointRequest {
             task_id: "recover".into(),
-            note: Some("safe point".into()),
+            note: Some("Inspect state; persist plan; recover safely".into()),
             progress: Some(0.25),
+            estimated_remaining_work_secs: Some(12.0),
+            plan_complete: true,
+            replan: false,
         })
         .unwrap();
     let before = manager.get_task("recover").unwrap();
@@ -123,7 +129,7 @@ fn checkpoint_and_recovery_preserve_runtime_without_extra_time() {
     assert_eq!(after.checkpoints, 1);
     assert_eq!(
         after.last_checkpoint.unwrap().note.as_deref(),
-        Some("safe point")
+        Some("Inspect state; persist plan; recover safely")
     );
     assert!((clock.elapsed_secs() - 2.5).abs() < 1e-9);
 }
@@ -138,7 +144,14 @@ fn process_restart_charges_wall_clock_downtime() {
         .unwrap();
     clock.advance_secs(1.0);
     manager
-        .checkpoint(CheckpointRequest::new("restart"))
+        .checkpoint(CheckpointRequest {
+            task_id: "restart".into(),
+            note: Some("Persist initial plan before process restart".into()),
+            progress: Some(0.0),
+            estimated_remaining_work_secs: Some(8.0),
+            plan_complete: true,
+            replan: false,
+        })
         .unwrap();
 
     let mut snapshot = store.state().unwrap();
@@ -218,6 +231,9 @@ fn edge_validation_and_adjustment_are_explicit() {
             task_id: "task".into(),
             note: None,
             progress: Some(2.0),
+            estimated_remaining_work_secs: None,
+            plan_complete: false,
+            replan: false,
         }),
         Err(TaskError::Invalid(_))
     ));
@@ -274,4 +290,111 @@ fn rwlock_manager_supports_concurrent_starts() {
         }
     });
     assert_eq!(manager.task_count(), 16);
+}
+
+fn plan(task_id: &str, progress: f64, eta: f64) -> CheckpointRequest {
+    CheckpointRequest {
+        task_id: task_id.into(),
+        note: Some("Inspect relevant files; implement minimal fix; run targeted tests".into()),
+        progress: Some(progress),
+        estimated_remaining_work_secs: Some(eta),
+        plan_complete: true,
+        replan: false,
+    }
+}
+
+#[test]
+fn first_checkpoint_must_submit_plan() {
+    let (_, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("plan", 30.0))
+        .unwrap();
+    assert!(matches!(
+        manager.checkpoint(CheckpointRequest::new("plan")),
+        Err(TaskError::Invalid(_))
+    ));
+    assert!(manager.checkpoint(plan("plan", 0.0, 20.0)).is_ok());
+    assert!(manager.get_task("plan").unwrap().plan_submitted);
+}
+
+#[test]
+fn plan_submitted_survives_recovery() {
+    let store = Arc::new(MemoryStore::new());
+    let manager = TaskManager::with_store(ManualClock::new(), store.clone()).unwrap();
+    manager
+        .start_task(StartTaskRequest::new("persist-plan", 30.0))
+        .unwrap();
+    manager.checkpoint(plan("persist-plan", 0.0, 20.0)).unwrap();
+    let recovered = TaskManager::with_store(ManualClock::new(), store).unwrap();
+    assert!(recovered.get_task("persist-plan").unwrap().plan_submitted);
+}
+
+#[test]
+fn progress_regression_requires_replan() {
+    let (_, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("progress", 30.0))
+        .unwrap();
+    manager.checkpoint(plan("progress", 0.5, 15.0)).unwrap();
+    let mut regressed = CheckpointRequest::new("progress");
+    regressed.progress = Some(0.4);
+    assert!(matches!(
+        manager.checkpoint(regressed.clone()),
+        Err(TaskError::Invalid(_))
+    ));
+    regressed.replan = true;
+    assert!(manager.checkpoint(regressed).is_ok());
+}
+
+#[test]
+fn finish_reports_real_overrun() {
+    let (clock, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("overrun", 10.0))
+        .unwrap();
+    clock.advance_secs(14.0);
+    let outcome = manager
+        .finish_task(FinishTaskRequest::new("overrun"))
+        .unwrap();
+    assert!((outcome.actual_elapsed_secs - 14.0).abs() < 1e-9);
+    assert!((outcome.overrun_secs - 4.0).abs() < 1e-9);
+}
+
+struct CountingStore {
+    state: std::sync::RwLock<Option<PersistedState>>,
+    saves: AtomicUsize,
+}
+impl CountingStore {
+    fn new() -> Self {
+        Self {
+            state: std::sync::RwLock::new(None),
+            saves: AtomicUsize::new(0),
+        }
+    }
+}
+impl SnapshotStore for CountingStore {
+    fn save(&self, state: &PersistedState) -> Result<(), String> {
+        self.saves.fetch_add(1, Ordering::SeqCst);
+        *self.state.write().unwrap() = Some(state.clone());
+        Ok(())
+    }
+    fn load(&self) -> Result<Option<PersistedState>, String> {
+        Ok(self.state.read().unwrap().clone())
+    }
+}
+
+#[test]
+fn tick_does_not_write_snapshot() {
+    let store = Arc::new(CountingStore::new());
+    let manager = TaskManager::with_store(ManualClock::new(), store.clone()).unwrap();
+    manager
+        .start_task(StartTaskRequest::new("ticks", 30.0))
+        .unwrap();
+    assert_eq!(store.saves.load(Ordering::SeqCst), 1);
+    for _ in 0..100 {
+        manager.tick(TickRequest::new("ticks")).unwrap();
+    }
+    assert_eq!(store.saves.load(Ordering::SeqCst), 1);
+    manager.checkpoint(plan("ticks", 0.0, 20.0)).unwrap();
+    assert_eq!(store.saves.load(Ordering::SeqCst), 2);
 }

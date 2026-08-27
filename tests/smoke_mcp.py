@@ -67,12 +67,54 @@ try:
     )
     if started.get("isError"):
         raise AssertionError(started)
+    start_content = started.get("structuredContent") or {}
+    assert start_content["directive"] == "submit_plan"
+    assert start_content["mode"] == "plan"
+    assert start_content["max_new_action_seconds"] == 0
 
-    ticked = request(4, "tools/call", {"name": "tick", "arguments": {}})
+    planned = request(
+        4,
+        "tools/call",
+        {
+            "name": "checkpoint",
+            "arguments": {
+                "plan_complete": True,
+                "note": "Inspect protocol; apply minimal change; run targeted smoke; deliver result.",
+                "estimated_remaining_work_seconds": 45,
+                "progress_percent": 0,
+            },
+        },
+    )
+    if planned.get("isError"):
+        raise AssertionError(planned)
+
+    ticked = request(
+        5,
+        "tools/call",
+        {
+            "name": "tick",
+            "arguments": {
+                "current_action": "Run a deliberately oversized action",
+                "current_action_estimated_seconds": 240,
+            },
+        },
+    )
     if ticked.get("isError"):
         raise AssertionError(ticked)
+    tick_content = ticked.get("structuredContent") or {}
+    assert tick_content["directive"] == "split_action"
+    assert tick_content["action_fits"] is False
+    assert tick_content["must_plan"] is False
 
-    finished = request(5, "tools/call", {"name": "finish_task", "arguments": {}})
+    increase = request(
+        6,
+        "tools/call",
+        {"name": "adjust_task", "arguments": {"add_seconds": 10}},
+    )
+    if not increase.get("isError"):
+        raise AssertionError("budget increase unexpectedly succeeded")
+
+    finished = request(7, "tools/call", {"name": "finish_task", "arguments": {}})
     if finished.get("isError"):
         raise AssertionError(finished)
 
@@ -82,8 +124,10 @@ try:
                 "protocol": initialized["protocolVersion"],
                 "server": initialized["serverInfo"],
                 "tools": names,
-                "start": started.get("structuredContent"),
-                "tick": ticked.get("structuredContent"),
+                "start": start_content,
+                "checkpoint": planned.get("structuredContent"),
+                "tick": tick_content,
+                "budget_increase_blocked": increase.get("isError"),
                 "finish": finished.get("structuredContent"),
             },
             separators=(",", ":"),

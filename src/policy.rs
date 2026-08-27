@@ -73,11 +73,11 @@ pub fn evaluate_time_policy(input: PolicyInput) -> PolicyDecision {
     let validation_percent = input
         .validation_reserve_percent
         .unwrap_or(default_validation)
-        .clamp(0.0, 40.0);
+        .clamp(5.0, 40.0);
     let finalization_percent = input
         .finalization_reserve_percent
         .unwrap_or(default_finalization)
-        .clamp(0.0, 25.0);
+        .clamp(3.0, 25.0);
     let validation_reserve = total * validation_percent / 100.0;
     let finalization_reserve = total * finalization_percent / 100.0;
     let reserved = (validation_reserve + finalization_reserve).min(total);
@@ -154,7 +154,7 @@ pub fn evaluate_time_policy(input: PolicyInput) -> PolicyDecision {
     let next_check = if matches!(mode, TimeMode::Expired) {
         0.0
     } else {
-        base_next.min(max_action.max(5.0)).min(remaining).max(1.0)
+        base_next.min(max_action.max(0.25)).min(remaining)
     };
 
     PolicyDecision {
