@@ -360,6 +360,102 @@ fn finish_reports_real_overrun() {
     assert!((outcome.overrun_secs - 4.0).abs() < 1e-9);
 }
 
+#[test]
+fn tick_preserves_actual_and_accounted_elapsed_after_deadline() {
+    let (clock, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("overdue-tick", 10.0))
+        .unwrap();
+    clock.advance_secs(14.0);
+
+    let (outcome, timing) = manager
+        .tick_with_timing(TickRequest::new("overdue-tick"))
+        .unwrap();
+    let view = outcome.task;
+
+    assert!((timing.actual_elapsed_secs - 14.0).abs() < 1e-9);
+    assert!((timing.accounted_elapsed_secs - 10.0).abs() < 1e-9);
+    assert!((view.elapsed_secs - timing.accounted_elapsed_secs).abs() < 1e-9);
+    assert!((timing.overrun_secs - 4.0).abs() < 1e-9);
+    assert!(!timing.deadline_met);
+    assert_eq!(view.status, TaskStatus::Exhausted);
+}
+
+#[test]
+fn finished_overrun_survives_recovery() {
+    let clock = ManualClock::new();
+    let store = Arc::new(MemoryStore::new());
+    let manager = TaskManager::with_store(clock.clone(), store.clone()).unwrap();
+    manager
+        .start_task(StartTaskRequest::new("persisted-overrun", 10.0))
+        .unwrap();
+    clock.advance_secs(14.0);
+    let finished = manager
+        .finish_task(FinishTaskRequest::new("persisted-overrun"))
+        .unwrap();
+    assert!((finished.task.elapsed_secs - 14.0).abs() < 1e-9);
+
+    let recovered = TaskManager::with_store(clock, store).unwrap();
+    let view = recovered.get_task("persisted-overrun").unwrap();
+    let timing = recovered.task_timing("persisted-overrun").unwrap();
+
+    assert!((view.elapsed_secs - 10.0).abs() < 1e-9);
+    assert!((timing.actual_elapsed_secs - 14.0).abs() < 1e-9);
+    assert!((timing.accounted_elapsed_secs - 10.0).abs() < 1e-9);
+    assert!((timing.overrun_secs - 4.0).abs() < 1e-9);
+    assert!(!timing.deadline_met);
+}
+
+#[test]
+fn prior_v2_snapshot_fixture_remains_recoverable() {
+    let snapshot: PersistedState = serde_json::from_str(
+        r#"{
+            "version": 2,
+            "saved_at_unix_ms": 0,
+            "tasks": [{
+                "task_id": "legacy-v2",
+                "parent_id": null,
+                "budget_secs": 10.0,
+                "mode": "balanced",
+                "schedule": {"tick_interval_secs": 1.0, "phases": []},
+                "metadata": {},
+                "status": "finished",
+                "elapsed_secs": 10.0,
+                "ticks": 1,
+                "checkpoints": 0,
+                "last_checkpoint": null
+            }]
+        }"#,
+    )
+    .unwrap();
+    let store = Arc::new(MemoryStore::new());
+    store.save(&snapshot).unwrap();
+
+    let recovered = TaskManager::with_store(ManualClock::new(), store).unwrap();
+    let view = recovered.get_task("legacy-v2").unwrap();
+
+    assert_eq!(view.status, TaskStatus::Finished);
+    assert!((view.elapsed_secs - 10.0).abs() < 1e-9);
+    assert!(!view.plan_submitted);
+}
+
+#[test]
+fn deadline_met_is_stable_at_and_around_tolerance() {
+    let (clock, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("deadline-edge", 10.0))
+        .unwrap();
+
+    clock.set_secs(10.0);
+    assert!(manager.task_timing("deadline-edge").unwrap().deadline_met);
+
+    clock.set_secs(10.000_000_001);
+    assert!(manager.task_timing("deadline-edge").unwrap().deadline_met);
+
+    clock.set_secs(10.000_000_002);
+    assert!(!manager.task_timing("deadline-edge").unwrap().deadline_met);
+}
+
 struct CountingStore {
     state: std::sync::RwLock<Option<PersistedState>>,
     saves: AtomicUsize,
