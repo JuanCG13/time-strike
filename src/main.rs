@@ -129,7 +129,12 @@ struct StartOutput {
 #[derive(Debug, Serialize, JsonSchema)]
 struct TickOutput {
     remaining_seconds: f64,
+    actual_elapsed_seconds: f64,
+    accounted_elapsed_seconds: f64,
+    /// Backward-compatible alias for `accounted_elapsed_seconds`.
     elapsed_seconds: f64,
+    overrun_seconds: f64,
+    deadline_met: bool,
     remaining_percent: f64,
     mode: String,
     schedule: String,
@@ -296,7 +301,11 @@ impl TimeStrikeServer {
         let action_fits = action_seconds.map(|seconds| seconds <= effective_max_action);
         TickOutput {
             remaining_seconds: round3(decision.remaining_secs),
+            actual_elapsed_seconds: round3(view.actual_elapsed_secs),
+            accounted_elapsed_seconds: round3(view.accounted_elapsed_secs),
             elapsed_seconds: round3(view.elapsed_secs),
+            overrun_seconds: round3(view.overrun_secs),
+            deadline_met: view.deadline_met,
             remaining_percent: round3(decision.remaining_percent),
             mode: if plan_required {
                 "plan".into()
@@ -547,7 +556,7 @@ impl TimeStrikeServer {
             overrun_seconds: round3(overrun),
             budget_used_percent: round3(actual_elapsed / view.budget_secs * 100.0),
             checkpoints: view.checkpoints,
-            deadline_met: overrun <= f64::EPSILON,
+            deadline_met: view.deadline_met,
         }))
     }
 }

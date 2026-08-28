@@ -105,6 +105,10 @@ try:
     assert tick_content["directive"] == "split_action"
     assert tick_content["action_fits"] is False
     assert tick_content["must_plan"] is False
+    assert tick_content["elapsed_seconds"] == tick_content["accounted_elapsed_seconds"]
+    assert tick_content["actual_elapsed_seconds"] >= tick_content["accounted_elapsed_seconds"]
+    assert tick_content["overrun_seconds"] == 0
+    assert tick_content["deadline_met"] is True
 
     increase = request(
         6,

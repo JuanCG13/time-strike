@@ -4,7 +4,9 @@ All notable improvements to Time Strike are recorded here.
 
 ## [Unreleased]
 
-- No unreleased changes yet.
+### Added
+
+- 2026-08-28: `tick` now reports actual elapsed time, budget-accounted elapsed time, overrun, and deadline compliance separately; actual elapsed time also survives persistence, preventing post-deadline runtime from being hidden by budget clamping.
 
 ## [0.2.0] - 2026-08-27
 

@@ -488,7 +488,14 @@ pub struct TaskView {
     pub task_id: String,
     pub parent_id: Option<String>,
     pub budget_secs: f64,
+    /// Monotonic runtime without deadline clamping.
+    pub actual_elapsed_secs: f64,
+    /// Runtime charged against the configured budget.
+    pub accounted_elapsed_secs: f64,
+    /// Backward-compatible alias for `accounted_elapsed_secs`.
     pub elapsed_secs: f64,
+    pub overrun_secs: f64,
+    pub deadline_met: bool,
     pub remaining_secs: f64,
     pub child_reserved_secs: f64,
     pub adaptive_reserve_secs: f64,
@@ -1056,8 +1063,7 @@ impl TaskManager {
         let task = tasks
             .get(&request.task_id)
             .expect("task checked before persistence");
-        let mut view = self.view_locked(task, &tasks, now);
-        view.elapsed_secs = runtime;
+        let view = self.view_locked(task, &tasks, now);
         Ok(FinishTaskOutcome {
             task: view,
             reason: request.reason,
@@ -1072,9 +1078,11 @@ impl TaskManager {
     }
 
     fn view_locked(&self, task: &Task, tasks: &HashMap<String, Task>, now: Duration) -> TaskView {
-        let elapsed = task.runtime_secs(now).min(task.budget_secs.max(0.0));
-        let remaining = (task.budget_secs - elapsed).max(0.0);
-        let phase = task.schedule.phase_at(elapsed);
+        let actual_elapsed = task.runtime_secs(now);
+        let accounted_elapsed = actual_elapsed.min(task.budget_secs.max(0.0));
+        let overrun = (actual_elapsed - task.budget_secs).max(0.0);
+        let remaining = (task.budget_secs - accounted_elapsed).max(0.0);
+        let phase = task.schedule.phase_at(accounted_elapsed);
         let mode = phase
             .and_then(|phase| phase.mode.clone())
             .unwrap_or_else(|| task.mode.clone());
@@ -1109,7 +1117,11 @@ impl TaskManager {
             task_id: task.task_id.clone(),
             parent_id: task.parent_id.clone(),
             budget_secs: task.budget_secs,
-            elapsed_secs: elapsed,
+            actual_elapsed_secs: actual_elapsed,
+            accounted_elapsed_secs: accounted_elapsed,
+            elapsed_secs: accounted_elapsed,
+            overrun_secs: overrun,
+            deadline_met: overrun <= EPSILON,
             remaining_secs: remaining,
             child_reserved_secs: task.child_reserved_secs,
             adaptive_reserve_secs: reserve,
@@ -1160,7 +1172,7 @@ impl TaskManager {
                 schedule: task.schedule.clone(),
                 metadata: task.metadata.clone(),
                 status: task.status.clone(),
-                elapsed_secs: task.runtime_secs(now).min(task.budget_secs.max(0.0)),
+                elapsed_secs: task.runtime_secs(now),
                 ticks: task.ticks,
                 checkpoints: task.checkpoints,
                 last_checkpoint: task.last_checkpoint.clone(),

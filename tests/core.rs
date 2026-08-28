@@ -360,6 +360,46 @@ fn finish_reports_real_overrun() {
     assert!((outcome.overrun_secs - 4.0).abs() < 1e-9);
 }
 
+#[test]
+fn tick_preserves_actual_and_accounted_elapsed_after_deadline() {
+    let (clock, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("overdue-tick", 10.0))
+        .unwrap();
+    clock.advance_secs(14.0);
+
+    let view = manager.tick(TickRequest::new("overdue-tick")).unwrap().task;
+
+    assert!((view.actual_elapsed_secs - 14.0).abs() < 1e-9);
+    assert!((view.accounted_elapsed_secs - 10.0).abs() < 1e-9);
+    assert!((view.elapsed_secs - view.accounted_elapsed_secs).abs() < 1e-9);
+    assert!((view.overrun_secs - 4.0).abs() < 1e-9);
+    assert!(!view.deadline_met);
+    assert_eq!(view.status, TaskStatus::Exhausted);
+}
+
+#[test]
+fn finished_overrun_survives_recovery() {
+    let clock = ManualClock::new();
+    let store = Arc::new(MemoryStore::new());
+    let manager = TaskManager::with_store(clock.clone(), store.clone()).unwrap();
+    manager
+        .start_task(StartTaskRequest::new("persisted-overrun", 10.0))
+        .unwrap();
+    clock.advance_secs(14.0);
+    manager
+        .finish_task(FinishTaskRequest::new("persisted-overrun"))
+        .unwrap();
+
+    let recovered = TaskManager::with_store(clock, store).unwrap();
+    let view = recovered.get_task("persisted-overrun").unwrap();
+
+    assert!((view.actual_elapsed_secs - 14.0).abs() < 1e-9);
+    assert!((view.accounted_elapsed_secs - 10.0).abs() < 1e-9);
+    assert!((view.overrun_secs - 4.0).abs() < 1e-9);
+    assert!(!view.deadline_met);
+}
+
 struct CountingStore {
     state: std::sync::RwLock<Option<PersistedState>>,
     saves: AtomicUsize,
