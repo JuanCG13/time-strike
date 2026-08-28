@@ -14,7 +14,7 @@ Returns: task id, remaining seconds, initial mode, next check and child clamp st
 
 Inputs are all optional: `task_id`, progress, ETA, current action and current-action ETA. Omitting `task_id` uses the most recently started active task.
 
-Returns current elapsed/remaining, mode, schedule, reserves, usable work, `max_new_action_seconds`, `next_check_seconds`, action fit and `must_*` flags. `actual_elapsed_seconds` preserves monotonic runtime, while `accounted_elapsed_seconds` is capped at the budget; `overrun_seconds` and `deadline_met` make deadline compliance explicit. The legacy `elapsed_seconds` remains an alias of accounted elapsed time. History/objective/checkpoint text is never returned.
+Returns current elapsed/remaining, mode, schedule, reserves, usable work, `max_new_action_seconds`, `next_check_seconds`, action fit and `must_*` flags. `actual_elapsed_seconds` preserves monotonic runtime, while `accounted_elapsed_seconds` is capped at the budget; `overrun_seconds` and `deadline_met` make deadline compliance explicit. The legacy `elapsed_seconds` remains an alias of accounted elapsed time. In the Rust API, the original `TaskView` layout and semantics remain unchanged; callers that need the split use `tick_with_timing` or `task_timing`. History/objective/checkpoint text is never returned.
 
 ### checkpoint
 

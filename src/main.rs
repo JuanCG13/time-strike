@@ -15,7 +15,7 @@ use time_strike::clock::MonotonicClock;
 use time_strike::policy::{PolicyDecision, PolicyInput, ScheduleStatus, evaluate_time_policy};
 use time_strike::{
     AdjustTaskRequest, CheckpointRequest, FileStore, FinishTaskRequest, StartTaskRequest,
-    TaskManager, TaskView, TickRequest,
+    TaskManager, TaskTiming, TaskView, TickRequest,
 };
 
 #[derive(Debug, Default, Deserialize)]
@@ -288,6 +288,7 @@ impl TimeStrikeServer {
 
     fn tick_output(
         view: &TaskView,
+        timing: &TaskTiming,
         decision: PolicyDecision,
         action_seconds: Option<f64>,
         verbose: bool,
@@ -301,11 +302,11 @@ impl TimeStrikeServer {
         let action_fits = action_seconds.map(|seconds| seconds <= effective_max_action);
         TickOutput {
             remaining_seconds: round3(decision.remaining_secs),
-            actual_elapsed_seconds: round3(view.actual_elapsed_secs),
-            accounted_elapsed_seconds: round3(view.accounted_elapsed_secs),
+            actual_elapsed_seconds: round3(timing.actual_elapsed_secs),
+            accounted_elapsed_seconds: round3(timing.accounted_elapsed_secs),
             elapsed_seconds: round3(view.elapsed_secs),
-            overrun_seconds: round3(view.overrun_secs),
-            deadline_met: view.deadline_met,
+            overrun_seconds: round3(timing.overrun_secs),
+            deadline_met: timing.deadline_met,
             remaining_percent: round3(decision.remaining_percent),
             mode: if plan_required {
                 "plan".into()
@@ -404,9 +405,9 @@ impl TimeStrikeServer {
         Parameters(input): Parameters<TickInput>,
     ) -> Result<Json<TickOutput>, String> {
         let task_id = self.resolve_task_id(input.task_id)?;
-        let outcome = self
+        let (outcome, timing) = self
             .manager
-            .tick(TickRequest::new(task_id))
+            .tick_with_timing(TickRequest::new(task_id))
             .map_err(|error| error.to_string())?;
         let decision = Self::policy(
             &outcome.task,
@@ -416,6 +417,7 @@ impl TimeStrikeServer {
         let _ = input.current_action;
         Ok(Json(Self::tick_output(
             &outcome.task,
+            &timing,
             decision,
             input.current_action_estimated_seconds,
             input.verbose || self.default_verbose,
@@ -533,6 +535,7 @@ impl TimeStrikeServer {
                 force: input.force,
             })
             .map_err(|error| error.to_string())?;
+        let deadline_met = outcome.deadline_met();
         let actual_elapsed = outcome.actual_elapsed_secs;
         let overrun = outcome.overrun_secs;
         let view = outcome.task;
@@ -556,7 +559,7 @@ impl TimeStrikeServer {
             overrun_seconds: round3(overrun),
             budget_used_percent: round3(actual_elapsed / view.budget_secs * 100.0),
             checkpoints: view.checkpoints,
-            deadline_met: view.deadline_met,
+            deadline_met,
         }))
     }
 }

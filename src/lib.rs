@@ -488,14 +488,7 @@ pub struct TaskView {
     pub task_id: String,
     pub parent_id: Option<String>,
     pub budget_secs: f64,
-    /// Monotonic runtime without deadline clamping.
-    pub actual_elapsed_secs: f64,
-    /// Runtime charged against the configured budget.
-    pub accounted_elapsed_secs: f64,
-    /// Backward-compatible alias for `accounted_elapsed_secs`.
     pub elapsed_secs: f64,
-    pub overrun_secs: f64,
-    pub deadline_met: bool,
     pub remaining_secs: f64,
     pub child_reserved_secs: f64,
     pub adaptive_reserve_secs: f64,
@@ -533,6 +526,33 @@ pub struct TickOutcome {
     pub phase_changed: bool,
 }
 
+/// Explicit deadline accounting returned by opt-in timing APIs.
+///
+/// This is separate from [`TaskView`] so existing Rust consumers keep the
+/// original struct layout and `elapsed_secs` semantics.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TaskTiming {
+    /// Monotonic runtime without deadline clamping.
+    pub actual_elapsed_secs: f64,
+    /// Runtime charged against the configured budget.
+    pub accounted_elapsed_secs: f64,
+    pub overrun_secs: f64,
+    pub deadline_met: bool,
+}
+
+impl TaskTiming {
+    fn new(actual_elapsed_secs: f64, budget_secs: f64) -> Self {
+        Self {
+            actual_elapsed_secs,
+            accounted_elapsed_secs: actual_elapsed_secs.min(budget_secs.max(0.0)),
+            overrun_secs: (actual_elapsed_secs - budget_secs).max(0.0),
+            // Compare against the summed boundary to avoid cancellation around
+            // the one-nanosecond tolerance.
+            deadline_met: actual_elapsed_secs <= budget_secs + EPSILON,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CheckpointOutcome {
     pub task: TaskView,
@@ -553,6 +573,12 @@ pub struct FinishTaskOutcome {
     pub reason: Option<String>,
     pub actual_elapsed_secs: f64,
     pub overrun_secs: f64,
+}
+
+impl FinishTaskOutcome {
+    pub fn deadline_met(&self) -> bool {
+        self.actual_elapsed_secs <= self.task.budget_secs + EPSILON
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -780,6 +806,15 @@ impl TaskManager {
     }
 
     pub fn tick(&self, request: TickRequest) -> Result<TickOutcome, TaskError> {
+        self.tick_with_timing(request).map(|(outcome, _)| outcome)
+    }
+
+    /// Tick once and return explicit actual/accounted deadline timing without
+    /// changing the stable [`TaskView`] contract.
+    pub fn tick_with_timing(
+        &self,
+        request: TickRequest,
+    ) -> Result<(TickOutcome, TaskTiming), TaskError> {
         validate_id(&request.task_id)?;
         let mut tasks = self.tasks.write().expect("task lock poisoned");
         let now = self.clock.now();
@@ -805,11 +840,28 @@ impl TaskManager {
         };
         let task = tasks.get(&request.task_id).expect("task checked");
         let view = self.view_locked(task, &tasks, now);
-        Ok(TickOutcome {
-            phase_changed,
-            task: view,
-            tick,
-        })
+        let timing = TaskTiming::new(task.runtime_secs(now), task.budget_secs);
+        Ok((
+            TickOutcome {
+                phase_changed,
+                task: view,
+                tick,
+            },
+            timing,
+        ))
+    }
+
+    /// Return timing for active or completed tasks without mutating state.
+    pub fn task_timing(&self, task_id: &str) -> Result<TaskTiming, TaskError> {
+        validate_id(task_id)?;
+        let tasks = self.tasks.read().expect("task lock poisoned");
+        let task = tasks
+            .get(task_id)
+            .ok_or_else(|| TaskError::NotFound(task_id.to_owned()))?;
+        Ok(TaskTiming::new(
+            task.runtime_secs(self.clock.now()),
+            task.budget_secs,
+        ))
     }
 
     pub fn checkpoint(&self, request: CheckpointRequest) -> Result<CheckpointOutcome, TaskError> {
@@ -1063,7 +1115,10 @@ impl TaskManager {
         let task = tasks
             .get(&request.task_id)
             .expect("task checked before persistence");
-        let view = self.view_locked(task, &tasks, now);
+        let mut view = self.view_locked(task, &tasks, now);
+        // Preserve the pre-existing finish contract: completed task views
+        // report actual runtime, while live views remain budget-accounted.
+        view.elapsed_secs = runtime;
         Ok(FinishTaskOutcome {
             task: view,
             reason: request.reason,
@@ -1078,11 +1133,9 @@ impl TaskManager {
     }
 
     fn view_locked(&self, task: &Task, tasks: &HashMap<String, Task>, now: Duration) -> TaskView {
-        let actual_elapsed = task.runtime_secs(now);
-        let accounted_elapsed = actual_elapsed.min(task.budget_secs.max(0.0));
-        let overrun = (actual_elapsed - task.budget_secs).max(0.0);
-        let remaining = (task.budget_secs - accounted_elapsed).max(0.0);
-        let phase = task.schedule.phase_at(accounted_elapsed);
+        let elapsed = task.runtime_secs(now).min(task.budget_secs.max(0.0));
+        let remaining = (task.budget_secs - elapsed).max(0.0);
+        let phase = task.schedule.phase_at(elapsed);
         let mode = phase
             .and_then(|phase| phase.mode.clone())
             .unwrap_or_else(|| task.mode.clone());
@@ -1117,11 +1170,7 @@ impl TaskManager {
             task_id: task.task_id.clone(),
             parent_id: task.parent_id.clone(),
             budget_secs: task.budget_secs,
-            actual_elapsed_secs: actual_elapsed,
-            accounted_elapsed_secs: accounted_elapsed,
-            elapsed_secs: accounted_elapsed,
-            overrun_secs: overrun,
-            deadline_met: overrun <= EPSILON,
+            elapsed_secs: elapsed,
             remaining_secs: remaining,
             child_reserved_secs: task.child_reserved_secs,
             adaptive_reserve_secs: reserve,
