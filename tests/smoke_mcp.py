@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 binary = Path(__file__).resolve().parents[1] / "target/release/time-strike"
+env = os.environ.copy()
+env["TIME_STRIKE_DEADLINE_UNIX_MS"] = str(int(time.time() * 1000) + 30_000)
 proc = subprocess.Popen(
     [str(binary)],
     stdin=subprocess.PIPE,
@@ -12,6 +16,7 @@ proc = subprocess.Popen(
     stderr=subprocess.PIPE,
     text=True,
     bufsize=1,
+    env=env,
 )
 
 
@@ -71,6 +76,9 @@ try:
     assert start_content["directive"] == "submit_plan"
     assert start_content["mode"] == "plan"
     assert start_content["max_new_action_seconds"] == 0
+    assert start_content["deadline_authority"] == "host_absolute"
+    assert start_content["clamped"] is True
+    assert 0 < start_content["remaining_seconds"] <= 30
 
     planned = request(
         4,
