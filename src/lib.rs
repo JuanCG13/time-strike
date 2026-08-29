@@ -737,6 +737,18 @@ impl TaskManager {
     }
 
     pub fn start_task(&self, request: StartTaskRequest) -> Result<StartTaskOutcome, TaskError> {
+        self.start_task_with_deadline(request, None)
+    }
+
+    /// Start a task while enforcing an optional deadline expressed in this
+    /// manager's monotonic clock domain. The cap is evaluated only after the
+    /// task write lock is acquired, so lock contention cannot manufacture a
+    /// fresh budget.
+    pub fn start_task_with_deadline(
+        &self,
+        request: StartTaskRequest,
+        deadline: Option<Duration>,
+    ) -> Result<StartTaskOutcome, TaskError> {
         validate_id(&request.task_id)?;
         validate_budget(request.budget_secs)?;
         request.schedule.validate()?;
@@ -747,6 +759,12 @@ impl TaskManager {
         }
         let now = self.clock.now();
         let mut effective_budget = request.budget_secs;
+        if let Some(deadline) = deadline {
+            if deadline <= now {
+                return Err(TaskError::Invalid("host deadline has elapsed".into()));
+            }
+            effective_budget = effective_budget.min(deadline.saturating_sub(now).as_secs_f64());
+        }
         if let Some(parent_id) = request.parent_id.as_deref() {
             let parent = tasks
                 .get(parent_id)
@@ -755,7 +773,7 @@ impl TaskManager {
             if parent_view.is_done() {
                 return Err(TaskError::ParentUnavailable(parent_id.to_owned()));
             }
-            effective_budget = request.budget_secs.min(parent_view.available_secs);
+            effective_budget = effective_budget.min(parent_view.available_secs);
             if effective_budget <= EPSILON {
                 return Err(TaskError::BudgetExhausted(parent_id.to_owned()));
             }
@@ -958,6 +976,17 @@ impl TaskManager {
     }
 
     pub fn adjust_task(&self, request: AdjustTaskRequest) -> Result<AdjustTaskOutcome, TaskError> {
+        self.adjust_task_with_deadline(request, None)
+    }
+
+    /// Adjust a task without allowing its monotonic end instant to move beyond
+    /// the host deadline. The cap is applied under the same write lock used to
+    /// read runtime and update the budget.
+    pub fn adjust_task_with_deadline(
+        &self,
+        request: AdjustTaskRequest,
+        deadline: Option<Duration>,
+    ) -> Result<AdjustTaskOutcome, TaskError> {
         validate_id(&request.task_id)?;
         if request.budget_secs.is_none() && request.mode.is_none() && request.schedule.is_none() {
             return Err(TaskError::EmptyAdjustment);
@@ -1013,9 +1042,21 @@ impl TaskManager {
                     &tasks[parent_id].mode,
                     &tasks[parent_id].schedule,
                 );
-                effective_budget = requested.min(parent_available);
+                effective_budget = effective_budget.min(parent_available);
                 if effective_budget + EPSILON < current_runtime {
                     return Err(TaskError::BudgetExhausted(parent_id.to_owned()));
+                }
+            }
+            if let Some(deadline) = deadline {
+                if deadline <= now {
+                    return Err(TaskError::Invalid("host deadline has elapsed".into()));
+                }
+                let max_total_budget = current_runtime + deadline.saturating_sub(now).as_secs_f64();
+                effective_budget = effective_budget.min(max_total_budget);
+                if effective_budget + EPSILON < current_runtime {
+                    return Err(TaskError::Invalid(
+                        "host deadline cannot cover elapsed runtime".into(),
+                    ));
                 }
             }
             clamped = effective_budget + EPSILON < requested;

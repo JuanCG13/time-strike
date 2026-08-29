@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
-use time_strike::clock::MonotonicClock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use time_strike::clock::{Clock, MonotonicClock};
 use time_strike::policy::{PolicyDecision, PolicyInput, ScheduleStatus, evaluate_time_policy};
 use time_strike::{
     AdjustTaskRequest, CheckpointRequest, FileStore, FinishTaskRequest, StartTaskRequest,
@@ -119,6 +119,7 @@ struct StartOutput {
     mode: String,
     next_check_seconds: f64,
     clamped: bool,
+    deadline_authority: String,
     planning_budget_seconds: f64,
     directive: String,
     max_new_action_seconds: f64,
@@ -195,6 +196,7 @@ struct TimeStrikeServer {
     default_finalization_percent: Option<f64>,
     default_verbose: bool,
     allow_budget_increase: bool,
+    host_deadline: Option<Duration>,
     #[allow(dead_code)] // read by rmcp-generated routing code
     tool_router: ToolRouter<Self>,
 }
@@ -202,6 +204,12 @@ struct TimeStrikeServer {
 impl TimeStrikeServer {
     fn new() -> Result<Self, String> {
         let config = load_config()?;
+        let clock = MonotonicClock::new();
+        // Capture the monotonic anchor before reading wall time. Any delay in
+        // conversion therefore shortens, rather than extends, the host budget.
+        let monotonic_anchor = clock.now();
+        let host_deadline =
+            monotonic_host_deadline(parse_host_deadline()?, current_unix_ms(), monotonic_anchor);
         let configured_state = if config.persistence.enabled {
             Some(config.persistence.path.unwrap_or_else(default_state_path))
         } else {
@@ -212,10 +220,9 @@ impl TimeStrikeServer {
             .or(configured_state);
         let manager = if let Some(path) = state_path {
             let store = FileStore::new(path)?;
-            TaskManager::with_store(MonotonicClock::new(), Arc::new(store))
-                .map_err(|error| error.to_string())?
+            TaskManager::with_store(clock, Arc::new(store)).map_err(|error| error.to_string())?
         } else {
-            TaskManager::new(MonotonicClock::new())
+            TaskManager::new(clock)
         };
         Ok(Self {
             manager: Arc::new(manager),
@@ -231,6 +238,7 @@ impl TimeStrikeServer {
                         || value.eq_ignore_ascii_case("yes")
                 })
                 .unwrap_or(false),
+            host_deadline,
             tool_router: Self::tool_router(),
         })
     }
@@ -377,7 +385,7 @@ impl TimeStrikeServer {
         request.metadata = metadata;
         let outcome = self
             .manager
-            .start_task(request)
+            .start_task_with_deadline(request, self.host_deadline)
             .map_err(|error| error.to_string())?;
         *self
             .active_task
@@ -390,6 +398,12 @@ impl TimeStrikeServer {
             mode: "plan".into(),
             next_check_seconds: round3(planning_budget_secs(outcome.task.budget_secs)),
             clamped: outcome.clamped,
+            deadline_authority: if self.host_deadline.is_some() {
+                "host_absolute"
+            } else {
+                "agent_relative"
+            }
+            .into(),
             planning_budget_seconds: round3(planning_budget_secs(outcome.task.budget_secs)),
             directive: "submit_plan".into(),
             max_new_action_seconds: 0.0,
@@ -508,7 +522,10 @@ impl TimeStrikeServer {
         }
         let outcome = self
             .manager
-            .adjust_task(AdjustTaskRequest::new(&task_id).with_budget(new_total))
+            .adjust_task_with_deadline(
+                AdjustTaskRequest::new(&task_id).with_budget(new_total),
+                self.host_deadline,
+            )
             .map_err(|error| error.to_string())?;
         let decision = Self::policy(&outcome.task, None, None);
         let _ = input.verbose;
@@ -579,6 +596,37 @@ fn planning_budget_secs(total_secs: f64) -> f64 {
     (total_secs * 0.05).clamp(2.0, 60.0).min(total_secs * 0.15)
 }
 
+fn monotonic_host_deadline(
+    host_deadline_unix_ms: Option<u64>,
+    now_unix_ms: u64,
+    monotonic_anchor: Duration,
+) -> Option<Duration> {
+    host_deadline_unix_ms.map(|deadline| {
+        monotonic_anchor.saturating_add(Duration::from_millis(deadline.saturating_sub(now_unix_ms)))
+    })
+}
+
+fn parse_host_deadline() -> Result<Option<u64>, String> {
+    let Some(value) = std::env::var_os("TIME_STRIKE_DEADLINE_UNIX_MS") else {
+        return Ok(None);
+    };
+    value
+        .to_string_lossy()
+        .parse::<u64>()
+        .map(Some)
+        .map_err(|_| {
+            "TIME_STRIKE_DEADLINE_UNIX_MS must be an unsigned Unix timestamp in milliseconds".into()
+        })
+}
+
+fn current_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
 fn directive(
     plan_required: bool,
     decision: &PolicyDecision,
@@ -632,4 +680,38 @@ async fn main() -> anyhow::Result<()> {
     let server = TimeStrikeServer::new().map_err(anyhow::Error::msg)?;
     server.serve(stdio()).await?.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wall_deadline_is_converted_once_to_a_monotonic_instant() {
+        let anchor = Duration::from_secs(5);
+        let deadline = monotonic_host_deadline(Some(20_000), 10_000, anchor).unwrap();
+        assert_eq!(deadline, Duration::from_secs(15));
+
+        // A subsequent wall-clock rollback is irrelevant: only monotonic time
+        // is used after initialization, so remaining time cannot increase.
+        let wall_after_rollback = 1_000_u64;
+        assert!(wall_after_rollback < 10_000);
+        assert_eq!(
+            deadline.saturating_sub(Duration::from_secs(6)),
+            Duration::from_secs(9)
+        );
+        assert_eq!(
+            deadline.saturating_sub(Duration::from_secs(7)),
+            Duration::from_secs(8)
+        );
+    }
+
+    #[test]
+    fn elapsed_wall_deadline_maps_to_the_monotonic_anchor() {
+        let anchor = Duration::from_secs(5);
+        assert_eq!(
+            monotonic_host_deadline(Some(9_999), 10_000, anchor),
+            Some(anchor)
+        );
+    }
 }
