@@ -27,10 +27,11 @@ Requires exactly one of `add_seconds`, `remove_seconds`, `set_total_seconds`. El
 ### finish_task
 
 Returns elapsed, total, unused, used percentage, checkpoint count and deadline result.
+`force=true` is retained in the input schema for compatibility but is rejected over MCP; forced parent completion is a host-only core privilege.
 
 ## Errors
 
-Invalid budgets, missing tasks, parent violations, active-child completion, invalid progress and ambiguous adjustments return MCP tool errors. Externally visible remaining time is never negative.
+Invalid budgets, missing tasks, parent violations, active-child completion, agent-requested force, invalid progress and ambiguous adjustments return MCP tool errors. Externally visible remaining time is never negative.
 
 ## Compact/verbose
 
