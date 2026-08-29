@@ -165,6 +165,37 @@ def smoke_elapsed_deadline():
         client.close()
 
 
+def smoke_agent_cannot_force_finish_parent():
+    client = McpClient(clean_env())
+    try:
+        client.initialize()
+        parent = start(client, 3, "force-parent")
+        assert not parent.get("isError"), parent
+        child = client.call(4, "start_task", {
+            "objective": "active child", "task_id": "force-child",
+            "parent_task_id": "force-parent", "budget_seconds": 10,
+        })
+        assert not child.get("isError"), child
+
+        forced = client.call(5, "finish_task", {
+            "task_id": "force-parent", "force": True,
+        })
+        assert forced.get("isError") is True, forced
+        forced_text = json.dumps(forced)
+        assert "host-only core privilege" in forced_text, forced
+
+        normal_parent = client.call(6, "finish_task", {"task_id": "force-parent"})
+        assert normal_parent.get("isError") is True, normal_parent
+        assert "active children" in json.dumps(normal_parent), normal_parent
+
+        child_finish = client.call(7, "finish_task", {"task_id": "force-child"})
+        assert not child_finish.get("isError"), child_finish
+        parent_finish = client.call(8, "finish_task", {"task_id": "force-parent"})
+        assert not parent_finish.get("isError"), parent_finish
+    finally:
+        client.close()
+
+
 def smoke_malformed_deadline():
     env = clean_env()
     env["TIME_STRIKE_DEADLINE_UNIX_MS"] = "not-a-timestamp"
@@ -179,10 +210,12 @@ def smoke_malformed_deadline():
 protocol = smoke_unset_deadline()
 remaining = smoke_future_deadline_and_adjustments()
 smoke_elapsed_deadline()
+smoke_agent_cannot_force_finish_parent()
 smoke_malformed_deadline()
 print(json.dumps({
     "protocol": protocol,
-    "cases": ["unset", "future", "elapsed", "malformed"],
+    "cases": ["unset", "future", "elapsed", "host_only_force", "malformed"],
     "future_remaining_seconds": remaining,
     "budget_increases_capped": True,
+    "agent_force_rejected": True,
 }, separators=(",", ":")))

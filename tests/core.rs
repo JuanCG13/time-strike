@@ -103,6 +103,29 @@ fn children_are_clamped_and_release_parent_budget() {
 }
 
 #[test]
+fn trusted_core_caller_can_force_finish_parent() {
+    let (_, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("force-root", 10.0))
+        .unwrap();
+    manager
+        .start_task(StartTaskRequest::new("force-child", 1.0).with_parent("force-root"))
+        .unwrap();
+
+    let mut finish = FinishTaskRequest::new("force-root");
+    finish.force = true;
+    manager.finish_task(finish).unwrap();
+
+    assert_eq!(
+        manager.get_task("force-root").unwrap().status,
+        TaskStatus::Finished
+    );
+    let child = manager.get_task("force-child").unwrap();
+    assert_eq!(child.status, TaskStatus::Active);
+    assert_eq!(child.parent_id, None);
+}
+
+#[test]
 fn checkpoint_and_recovery_preserve_runtime_without_extra_time() {
     let clock = ManualClock::new();
     let store = Arc::new(MemoryStore::new());

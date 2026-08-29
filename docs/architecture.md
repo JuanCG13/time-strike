@@ -33,7 +33,7 @@ Finalization has two concepts:
 
 ## Children
 
-A child budget is clamped to the parent's currently available work budget. Active child reservations are tracked on the parent and released when a child finishes. Parent completion rejects active children unless forced.
+A child budget is clamped to the parent's currently available work budget. Active child reservations are tracked on the parent and released when a child finishes. Parent completion rejects active children. The core retains an explicit force override for trusted host integrations, but the MCP transport rejects agent-requested force so an agent cannot detach unfinished children or discard their reservations.
 
 ## Persistence
 

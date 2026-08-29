@@ -108,6 +108,8 @@ struct AdjustInput {
 struct FinishInput {
     task_id: Option<String>,
     reason: Option<String>,
+    /// Compatibility field. MCP callers cannot exercise this host-only core
+    /// privilege.
     #[serde(default)]
     force: bool,
 }
@@ -543,13 +545,18 @@ impl TimeStrikeServer {
         &self,
         Parameters(input): Parameters<FinishInput>,
     ) -> Result<Json<FinishOutput>, String> {
+        if input.force {
+            return Err(
+                "force is a host-only core privilege and cannot be requested over MCP".into(),
+            );
+        }
         let task_id = self.resolve_task_id(input.task_id)?;
         let outcome = self
             .manager
             .finish_task(FinishTaskRequest {
                 task_id: task_id.clone(),
                 reason: input.reason,
-                force: input.force,
+                force: false,
             })
             .map_err(|error| error.to_string())?;
         let deadline_met = outcome.deadline_met();
