@@ -1,7 +1,8 @@
 use std::sync::{
-    Arc,
+    Arc, Condvar, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::time::Duration;
 use time_strike::{
     AdjustTaskRequest, CheckpointRequest, FileStore, FinishTaskRequest, ManualClock, MemoryStore,
     Mode, PersistedState, Schedule, SchedulePhase, SnapshotStore, StartTaskRequest, TaskError,
@@ -290,6 +291,149 @@ fn rwlock_manager_supports_concurrent_starts() {
         }
     });
     assert_eq!(manager.task_count(), 16);
+}
+
+#[derive(Default)]
+struct BlockingStore {
+    entered: (Mutex<bool>, Condvar),
+    release: (Mutex<bool>, Condvar),
+    saves: AtomicUsize,
+}
+
+impl BlockingStore {
+    fn wait_until_save_holds_task_lock(&self) {
+        let (lock, ready) = &self.entered;
+        let mut entered = lock.lock().unwrap();
+        while !*entered {
+            entered = ready.wait(entered).unwrap();
+        }
+    }
+
+    fn release_save(&self) {
+        let (lock, released) = &self.release;
+        *lock.lock().unwrap() = true;
+        released.notify_all();
+    }
+}
+
+impl SnapshotStore for BlockingStore {
+    fn save(&self, _state: &PersistedState) -> Result<(), String> {
+        if self.saves.fetch_add(1, Ordering::SeqCst) == 0 {
+            let (entered_lock, entered_ready) = &self.entered;
+            *entered_lock.lock().unwrap() = true;
+            entered_ready.notify_all();
+
+            let (release_lock, release_ready) = &self.release;
+            let mut released = release_lock.lock().unwrap();
+            while !*released {
+                released = release_ready.wait(released).unwrap();
+            }
+        }
+        Ok(())
+    }
+
+    fn load(&self) -> Result<Option<PersistedState>, String> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn deadline_crossed_while_waiting_for_lock_rejects_without_creating_task() {
+    let clock = ManualClock::new();
+    let store = Arc::new(BlockingStore::default());
+    let manager = Arc::new(TaskManager::with_store(clock.clone(), store.clone()).unwrap());
+
+    std::thread::scope(|scope| {
+        let holder_manager = manager.clone();
+        let holder = scope.spawn(move || {
+            holder_manager
+                .start_task(StartTaskRequest::new("lock-holder", 30.0))
+                .unwrap();
+        });
+        store.wait_until_save_holds_task_lock();
+
+        let blocked_manager = manager.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let blocked = scope.spawn(move || {
+            entered_tx.send(()).unwrap();
+            blocked_manager.start_task_with_deadline(
+                StartTaskRequest::new("late-task", 30.0),
+                Some(Duration::from_secs(5)),
+            )
+        });
+        entered_rx.recv().unwrap();
+        clock.set_secs(6.0);
+        store.release_save();
+
+        holder.join().unwrap();
+        assert!(matches!(
+            blocked.join().unwrap(),
+            Err(TaskError::Invalid(_))
+        ));
+    });
+
+    assert_eq!(manager.task_count(), 1);
+    assert!(matches!(
+        manager.get_task("late-task"),
+        Err(TaskError::NotFound(_))
+    ));
+}
+
+#[test]
+fn host_deadline_caps_start_and_all_budget_increases() {
+    let (clock, manager) = manager();
+    let deadline = Duration::from_secs(10);
+    let started = manager
+        .start_task_with_deadline(StartTaskRequest::new("host-capped", 60.0), Some(deadline))
+        .unwrap();
+    assert_eq!(started.task.budget_secs, 10.0);
+    assert!(started.clamped);
+
+    clock.advance_secs(1.0);
+    let added = manager
+        .adjust_task_with_deadline(
+            AdjustTaskRequest::new("host-capped").with_budget(70.0),
+            Some(deadline),
+        )
+        .unwrap();
+    assert_eq!(added.task.budget_secs, 10.0);
+    assert!(added.clamped);
+
+    let set_total = manager
+        .adjust_task_with_deadline(
+            AdjustTaskRequest::new("host-capped").with_budget(120.0),
+            Some(deadline),
+        )
+        .unwrap();
+    assert_eq!(set_total.task.budget_secs, 10.0);
+    assert!(set_total.clamped);
+}
+
+#[test]
+fn host_deadline_never_expands_a_smaller_request() {
+    let (_, manager) = manager();
+    let started = manager
+        .start_task_with_deadline(
+            StartTaskRequest::new("small-request", 1.0),
+            Some(Duration::from_secs(10)),
+        )
+        .unwrap();
+    assert_eq!(started.task.budget_secs, 1.0);
+    assert!(!started.clamped);
+}
+
+#[test]
+fn host_deadline_does_not_sanitize_invalid_requested_budgets() {
+    let (_, manager) = manager();
+    for (index, budget) in [0.0, -1.0, f64::INFINITY, f64::NAN].into_iter().enumerate() {
+        assert!(matches!(
+            manager.start_task_with_deadline(
+                StartTaskRequest::new(format!("invalid-{index}"), budget),
+                Some(Duration::from_secs(10)),
+            ),
+            Err(TaskError::Invalid(_))
+        ));
+    }
 }
 
 fn plan(task_id: &str, progress: f64, eta: f64) -> CheckpointRequest {

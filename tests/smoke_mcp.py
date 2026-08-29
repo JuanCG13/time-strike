@@ -2,157 +2,187 @@
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
 binary = Path(__file__).resolve().parents[1] / "target/release/time-strike"
-env = os.environ.copy()
-env["TIME_STRIKE_DEADLINE_UNIX_MS"] = str(int(time.time() * 1000) + 30_000)
-proc = subprocess.Popen(
-    [str(binary)],
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    text=True,
-    bufsize=1,
-    env=env,
-)
 
 
-def send(message):
-    proc.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
-    proc.stdin.flush()
+def clean_env():
+    env = os.environ.copy()
+    for key in (
+        "TIME_STRIKE_DEADLINE_UNIX_MS",
+        "TIME_STRIKE_ALLOW_BUDGET_INCREASE",
+        "TIME_STRIKE_CONFIG",
+        "TIME_STRIKE_STATE",
+    ):
+        env.pop(key, None)
+    return env
 
 
-def request(request_id, method, params=None):
-    message = {"jsonrpc": "2.0", "id": request_id, "method": method}
-    if params is not None:
-        message["params"] = params
-    send(message)
-    while True:
-        line = proc.stdout.readline()
-        if not line:
-            raise RuntimeError(f"server closed stdout; stderr={proc.stderr.read()!r}")
-        response = json.loads(line)
-        if response.get("id") == request_id:
-            if "error" in response:
-                raise RuntimeError(f"{method}: {response['error']}")
-            return response["result"]
-
-
-try:
-    initialized = request(
-        1,
-        "initialize",
-        {
-            "protocolVersion": "2025-11-25",
-            "capabilities": {},
-            "clientInfo": {"name": "time-strike-smoke", "version": "1.0"},
-        },
-    )
-    send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-    tools = request(2, "tools/list", {})["tools"]
-    names = [tool["name"] for tool in tools]
-    expected = ["adjust_task", "checkpoint", "finish_task", "start_task", "tick"]
-    if sorted(names) != expected:
-        raise AssertionError(f"unexpected tools: {names}")
-
-    started = request(
-        3,
-        "tools/call",
-        {
-            "name": "start_task",
-            "arguments": {
-                "objective": "stdio smoke",
-                "task_id": "smoke-task",
-                "budget_seconds": 60,
-            },
-        },
-    )
-    if started.get("isError"):
-        raise AssertionError(started)
-    start_content = started.get("structuredContent") or {}
-    assert start_content["directive"] == "submit_plan"
-    assert start_content["mode"] == "plan"
-    assert start_content["max_new_action_seconds"] == 0
-    assert start_content["deadline_authority"] == "host_absolute"
-    assert start_content["clamped"] is True
-    assert 0 < start_content["remaining_seconds"] <= 30
-
-    planned = request(
-        4,
-        "tools/call",
-        {
-            "name": "checkpoint",
-            "arguments": {
-                "plan_complete": True,
-                "note": "Inspect protocol; apply minimal change; run targeted smoke; deliver result.",
-                "estimated_remaining_work_seconds": 45,
-                "progress_percent": 0,
-            },
-        },
-    )
-    if planned.get("isError"):
-        raise AssertionError(planned)
-
-    ticked = request(
-        5,
-        "tools/call",
-        {
-            "name": "tick",
-            "arguments": {
-                "current_action": "Run a deliberately oversized action",
-                "current_action_estimated_seconds": 240,
-            },
-        },
-    )
-    if ticked.get("isError"):
-        raise AssertionError(ticked)
-    tick_content = ticked.get("structuredContent") or {}
-    assert tick_content["directive"] == "split_action"
-    assert tick_content["action_fits"] is False
-    assert tick_content["must_plan"] is False
-    assert tick_content["elapsed_seconds"] == tick_content["accounted_elapsed_seconds"]
-    assert tick_content["actual_elapsed_seconds"] >= tick_content["accounted_elapsed_seconds"]
-    assert tick_content["overrun_seconds"] == 0
-    assert tick_content["deadline_met"] is True
-
-    increase = request(
-        6,
-        "tools/call",
-        {"name": "adjust_task", "arguments": {"add_seconds": 10}},
-    )
-    if not increase.get("isError"):
-        raise AssertionError("budget increase unexpectedly succeeded")
-
-    finished = request(7, "tools/call", {"name": "finish_task", "arguments": {}})
-    if finished.get("isError"):
-        raise AssertionError(finished)
-
-    print(
-        json.dumps(
-            {
-                "protocol": initialized["protocolVersion"],
-                "server": initialized["serverInfo"],
-                "tools": names,
-                "start": start_content,
-                "checkpoint": planned.get("structuredContent"),
-                "tick": tick_content,
-                "budget_increase_blocked": increase.get("isError"),
-                "finish": finished.get("structuredContent"),
-            },
-            separators=(",", ":"),
+class McpClient:
+    def __init__(self, env):
+        self.proc = subprocess.Popen(
+            [str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, bufsize=1, env=env,
         )
-    )
-finally:
-    if proc.stdin:
-        proc.stdin.close()
+
+    def send(self, message):
+        self.proc.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+        self.proc.stdin.flush()
+
+    def request(self, request_id, method, params=None):
+        message = {"jsonrpc": "2.0", "id": request_id, "method": method}
+        if params is not None:
+            message["params"] = params
+        self.send(message)
+        while True:
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError(f"server closed stdout; stderr={self.proc.stderr.read()!r}")
+            response = json.loads(line)
+            if response.get("id") == request_id:
+                if "error" in response:
+                    raise RuntimeError(f"{method}: {response['error']}")
+                return response["result"]
+
+    def initialize(self):
+        initialized = self.request(1, "initialize", {
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "time-strike-smoke", "version": "1.0"},
+        })
+        self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        names = sorted(tool["name"] for tool in self.request(2, "tools/list", {})["tools"])
+        assert names == ["adjust_task", "checkpoint", "finish_task", "start_task", "tick"]
+        return initialized
+
+    def call(self, request_id, name, arguments):
+        return self.request(request_id, "tools/call", {"name": name, "arguments": arguments})
+
+    def close(self):
+        if self.proc.stdin:
+            self.proc.stdin.close()
+        try:
+            self.proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.proc.terminate()
+            self.proc.wait(timeout=3)
+        stderr = self.proc.stderr.read() if self.proc.stderr else ""
+        if stderr:
+            raise AssertionError(f"unexpected server stderr: {stderr}")
+
+
+def start(client, request_id, task_id, budget=60):
+    return client.call(request_id, "start_task", {
+        "objective": "stdio smoke", "task_id": task_id, "budget_seconds": budget,
+    })
+
+
+def smoke_unset_deadline():
+    client = McpClient(clean_env())
     try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        proc.terminate()
-        proc.wait(timeout=3)
-    stderr = proc.stderr.read() if proc.stderr else ""
-    if stderr:
-        print(stderr, file=sys.stderr, end="")
+        initialized = client.initialize()
+        started = start(client, 3, "relative-task")
+        assert not started.get("isError"), started
+        content = started.get("structuredContent") or {}
+        assert content["deadline_authority"] == "agent_relative"
+        assert content["clamped"] is False
+        assert 59 < content["remaining_seconds"] <= 60
+        client.call(4, "finish_task", {"task_id": "relative-task"})
+        return initialized["protocolVersion"]
+    finally:
+        client.close()
+
+
+def smoke_future_deadline_and_adjustments():
+    env = clean_env()
+    env["TIME_STRIKE_DEADLINE_UNIX_MS"] = str(int(time.time() * 1000) + 30_000)
+    env["TIME_STRIKE_ALLOW_BUDGET_INCREASE"] = "1"
+    client = McpClient(env)
+    try:
+        client.initialize()
+        started = start(client, 3, "host-task")
+        assert not started.get("isError"), started
+        start_content = started.get("structuredContent") or {}
+        assert start_content["directive"] == "submit_plan"
+        assert start_content["mode"] == "plan"
+        assert start_content["max_new_action_seconds"] == 0
+        assert start_content["deadline_authority"] == "host_absolute"
+        assert start_content["clamped"] is True
+        assert 0 < start_content["remaining_seconds"] <= 30
+
+        planned = client.call(4, "checkpoint", {
+            "task_id": "host-task", "plan_complete": True,
+            "note": "Inspect protocol; apply minimal change; run targeted smoke; deliver result.",
+            "estimated_remaining_work_seconds": 45, "progress_percent": 0,
+        })
+        assert not planned.get("isError"), planned
+        ticked = client.call(5, "tick", {
+            "task_id": "host-task", "current_action": "Run an oversized action",
+            "current_action_estimated_seconds": 240,
+        })
+        assert not ticked.get("isError"), ticked
+        tick_content = ticked.get("structuredContent") or {}
+        assert tick_content["directive"] == "split_action"
+        assert tick_content["action_fits"] is False
+        assert tick_content["must_plan"] is False
+        assert tick_content["elapsed_seconds"] == tick_content["accounted_elapsed_seconds"]
+        assert tick_content["actual_elapsed_seconds"] >= tick_content["accounted_elapsed_seconds"]
+        assert tick_content["overrun_seconds"] == 0
+        assert tick_content["deadline_met"] is True
+
+        added = client.call(6, "adjust_task", {"task_id": "host-task", "add_seconds": 60})
+        assert not added.get("isError"), added
+        added_content = added.get("structuredContent") or {}
+        assert added_content["clamped"] is True
+        assert added_content["total_budget_seconds"] <= 30
+        set_total = client.call(7, "adjust_task", {
+            "task_id": "host-task", "set_total_seconds": 120,
+        })
+        assert not set_total.get("isError"), set_total
+        set_content = set_total.get("structuredContent") or {}
+        assert set_content["clamped"] is True
+        assert set_content["total_budget_seconds"] <= 30
+
+        finished = client.call(8, "finish_task", {"task_id": "host-task"})
+        assert not finished.get("isError"), finished
+        return start_content["remaining_seconds"]
+    finally:
+        client.close()
+
+
+def smoke_elapsed_deadline():
+    env = clean_env()
+    env["TIME_STRIKE_DEADLINE_UNIX_MS"] = str(int(time.time() * 1000) - 1_000)
+    client = McpClient(env)
+    try:
+        client.initialize()
+        started = start(client, 3, "late-task")
+        assert started.get("isError") is True, started
+        missing = client.call(4, "tick", {"task_id": "late-task"})
+        assert missing.get("isError") is True, missing
+    finally:
+        client.close()
+
+
+def smoke_malformed_deadline():
+    env = clean_env()
+    env["TIME_STRIKE_DEADLINE_UNIX_MS"] = "not-a-timestamp"
+    result = subprocess.run(
+        [str(binary)], input="", text=True, capture_output=True,
+        env=env, timeout=3, check=False,
+    )
+    assert result.returncode != 0
+    assert "must be an unsigned Unix timestamp" in result.stderr
+
+
+protocol = smoke_unset_deadline()
+remaining = smoke_future_deadline_and_adjustments()
+smoke_elapsed_deadline()
+smoke_malformed_deadline()
+print(json.dumps({
+    "protocol": protocol,
+    "cases": ["unset", "future", "elapsed", "malformed"],
+    "future_remaining_seconds": remaining,
+    "budget_increases_capped": True,
+}, separators=(",", ":")))

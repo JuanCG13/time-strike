@@ -23,9 +23,13 @@ milliseconds established before the first model inference. `start_task` then
 uses the smaller of the agent-requested budget and the remaining host time. A
 late tool call therefore cannot reset the clock or manufacture a fresh budget.
 
-Execution timing remains monotonic after task creation. Wall time is consulted
-only once to convert the host's absolute deadline into the initial remaining
-budget. An elapsed or invalid host deadline fails closed and no task is created.
+Wall time is consulted only once at server initialization to convert the host's
+absolute deadline into an immutable monotonic instant. The limit is applied
+under the task lock when creation fixes `started_at` and whenever a budget is
+adjusted, including when `TIME_STRIKE_ALLOW_BUDGET_INCREASE=1`. Lock contention,
+wall-clock rollback, and later adjustments therefore cannot move the effective
+end past the host deadline. An elapsed deadline rejects task creation without
+persisting it; an invalid value prevents server startup.
 
 ```bash
 TIME_STRIKE_DEADLINE_UNIX_MS=1787994000000 /absolute/path/to/time-strike
