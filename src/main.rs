@@ -18,6 +18,10 @@ use time_strike::{
     TaskManager, TaskTiming, TaskView, TickRequest,
 };
 
+const MIN_PLAN_STEPS: usize = 2;
+const MAX_PLAN_STEPS: usize = 8;
+const MAX_PLAN_FIELD_CHARS: usize = 160;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct AppConfig {
@@ -79,6 +83,16 @@ struct TickInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct PlanStepInput {
+    /// Concrete action to perform.
+    action: String,
+    /// Bounded estimate for this step, in seconds.
+    estimated_seconds: f64,
+    /// Observable condition that proves the step is complete.
+    done_when: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct CheckpointInput {
     task_id: Option<String>,
     progress_percent: Option<f64>,
@@ -86,6 +100,9 @@ struct CheckpointInput {
     #[serde(default)]
     completed: Vec<String>,
     note: Option<String>,
+    /// Two to eight auditable steps for an initial or replacement plan.
+    #[serde(default)]
+    plan_steps: Vec<PlanStepInput>,
     #[serde(default)]
     plan_complete: bool,
     #[serde(default)]
@@ -167,6 +184,7 @@ struct CheckpointOutput {
     schedule: String,
     next_check_seconds: f64,
     must_converge: bool,
+    plan_step_count: usize,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -441,31 +459,40 @@ impl TimeStrikeServer {
     }
 
     #[tool(
-        description = "Submit the initial plan or record progress and ETA. The first checkpoint must use plan_complete=true."
+        description = "Submit the initial plan or record progress and ETA. Prefer two to eight plan_steps with action, estimated_seconds, and done_when; legacy note plans remain accepted. The first checkpoint must use plan_complete=true."
     )]
     async fn checkpoint(
         &self,
         Parameters(input): Parameters<CheckpointInput>,
     ) -> Result<Json<CheckpointOutput>, String> {
         let task_id = self.resolve_task_id(input.task_id)?;
-        let note = input.note.or_else(|| {
-            (!input.completed.is_empty()).then(|| {
-                input
-                    .completed
-                    .iter()
-                    .take(4)
-                    .map(|item| item.chars().take(64).collect::<String>())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            })
-        });
+        let structured_plan = structured_plan(&input.plan_steps, input.plan_complete)?;
+        let plan_step_count = input.plan_steps.len();
+        let estimated_remaining_work_seconds = structured_plan
+            .as_ref()
+            .map(|plan| plan.estimated_seconds)
+            .or(input.estimated_remaining_work_seconds);
+        let note = structured_plan
+            .map(|plan| plan.note)
+            .or(input.note)
+            .or_else(|| {
+                (!input.completed.is_empty()).then(|| {
+                    input
+                        .completed
+                        .iter()
+                        .take(4)
+                        .map(|item| item.chars().take(64).collect::<String>())
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+            });
         let outcome = self
             .manager
             .checkpoint(CheckpointRequest {
                 task_id: task_id.clone(),
                 note,
                 progress: input.progress_percent.map(|progress| progress / 100.0),
-                estimated_remaining_work_secs: input.estimated_remaining_work_seconds,
+                estimated_remaining_work_secs: estimated_remaining_work_seconds,
                 plan_complete: input.plan_complete,
                 replan: input.replan,
             })
@@ -473,7 +500,7 @@ impl TimeStrikeServer {
         let decision = Self::policy(
             &outcome.task,
             input.progress_percent,
-            input.estimated_remaining_work_seconds,
+            estimated_remaining_work_seconds,
         );
         let mode = format!("{:?}", decision.mode).to_ascii_lowercase();
         let schedule = schedule_name(decision.schedule).to_string();
@@ -486,6 +513,7 @@ impl TimeStrikeServer {
             schedule,
             next_check_seconds: round3(decision.next_check_secs),
             must_converge: decision.must_converge,
+            plan_step_count,
         }))
     }
 
@@ -591,7 +619,7 @@ impl TimeStrikeServer {
 #[tool_handler(
     name = "time-strike",
     version = "0.2.0",
-    instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint with plan_complete=true, a compact plan, and an ETA before any costly action. Call tick before and after searches, edits, tests, delegation, and tool calls. Never start work longer than max_new_action_seconds; split it. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
+    instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint before costly work with plan_complete=true and 2-8 plan_steps; each needs action, estimated_seconds, and done_when. Call tick before and after searches, edits, tests, delegation, and tool calls. Never start work longer than max_new_action_seconds; split it. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
 )]
 impl ServerHandler for TimeStrikeServer {}
 
@@ -601,6 +629,71 @@ fn round3(value: f64) -> f64 {
 
 fn planning_budget_secs(total_secs: f64) -> f64 {
     (total_secs * 0.05).clamp(2.0, 60.0).min(total_secs * 0.15)
+}
+
+struct StructuredPlan {
+    note: String,
+    estimated_seconds: f64,
+}
+
+fn structured_plan(
+    steps: &[PlanStepInput],
+    plan_complete: bool,
+) -> Result<Option<StructuredPlan>, String> {
+    if steps.is_empty() {
+        return Ok(None);
+    }
+    if !plan_complete {
+        return Err("plan_steps requires plan_complete=true".into());
+    }
+    if !(MIN_PLAN_STEPS..=MAX_PLAN_STEPS).contains(&steps.len()) {
+        return Err(format!(
+            "plan_steps must contain between {MIN_PLAN_STEPS} and {MAX_PLAN_STEPS} steps"
+        ));
+    }
+
+    let mut estimated_seconds = 0.0;
+    let mut rendered = Vec::with_capacity(steps.len());
+    for (index, step) in steps.iter().enumerate() {
+        let action = step.action.trim();
+        let done_when = step.done_when.trim();
+        if action.is_empty() || done_when.is_empty() {
+            return Err(format!(
+                "plan_steps[{}] requires non-empty action and done_when",
+                index
+            ));
+        }
+        if action.chars().count() > MAX_PLAN_FIELD_CHARS
+            || done_when.chars().count() > MAX_PLAN_FIELD_CHARS
+        {
+            return Err(format!(
+                "plan_steps[{}] action and done_when must each be at most {MAX_PLAN_FIELD_CHARS} characters",
+                index
+            ));
+        }
+        if !step.estimated_seconds.is_finite() || step.estimated_seconds <= 0.0 {
+            return Err(format!(
+                "plan_steps[{}].estimated_seconds must be finite and > 0",
+                index
+            ));
+        }
+        estimated_seconds += step.estimated_seconds;
+        if !estimated_seconds.is_finite() {
+            return Err("plan_steps estimated_seconds total is not finite".into());
+        }
+        rendered.push(format!(
+            "{}. {} [{}s; done: {}]",
+            index + 1,
+            action,
+            round3(step.estimated_seconds),
+            done_when
+        ));
+    }
+
+    Ok(Some(StructuredPlan {
+        note: rendered.join(" "),
+        estimated_seconds,
+    }))
 }
 
 fn monotonic_host_deadline(
@@ -720,5 +813,50 @@ mod tests {
             monotonic_host_deadline(Some(9_999), 10_000, anchor),
             Some(anchor)
         );
+    }
+
+    #[test]
+    fn structured_plan_is_bounded_and_derives_eta() {
+        let steps = vec![
+            PlanStepInput {
+                action: "Inspect the failing path".into(),
+                estimated_seconds: 4.0,
+                done_when: "the invariant is identified".into(),
+            },
+            PlanStepInput {
+                action: "Apply and verify the minimal fix".into(),
+                estimated_seconds: 6.5,
+                done_when: "the regression test passes".into(),
+            },
+        ];
+        let plan = structured_plan(&steps, true).unwrap().unwrap();
+        assert_eq!(plan.estimated_seconds, 10.5);
+        assert!(plan.note.contains("1. Inspect the failing path"));
+        assert!(plan.note.contains("done: the regression test passes"));
+    }
+
+    #[test]
+    fn structured_plan_rejects_non_auditable_shapes() {
+        let one_step = vec![PlanStepInput {
+            action: "Do everything".into(),
+            estimated_seconds: 1.0,
+            done_when: "done".into(),
+        }];
+        assert!(structured_plan(&one_step, true).is_err());
+
+        let invalid_estimate = vec![
+            PlanStepInput {
+                action: "Inspect".into(),
+                estimated_seconds: f64::NAN,
+                done_when: "cause known".into(),
+            },
+            PlanStepInput {
+                action: "Verify".into(),
+                estimated_seconds: 1.0,
+                done_when: "test passes".into(),
+            },
+        ];
+        assert!(structured_plan(&invalid_estimate, true).is_err());
+        assert!(structured_plan(&invalid_estimate, false).is_err());
     }
 }

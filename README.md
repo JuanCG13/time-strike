@@ -201,7 +201,7 @@ start_task → tick → checkpoint → finish_task
 1. Call `start_task` once with `budget_seconds`.
 2. Call `tick` before and after costly work, and whenever `next_check_seconds` elapses.
 3. Do not start an action materially longer than `max_new_action_seconds`.
-4. Use `checkpoint` after meaningful progress, including a percentage and ETA when available.
+4. Submit the initial `checkpoint` with two to eight structured `plan_steps` (`action`, `estimated_seconds`, and `done_when`), then checkpoint only after meaningful progress or ETA changes. The legacy compact `note` plan remains supported.
 5. Obey `must_converge`, `must_validate`, `must_finalize`, and `must_stop`. These are control signals for the calling agent; Time Strike cannot force an LLM to call a tool.
 6. Call `finish_task` before delivering the result. `adjust_task` is optional when scope changes.
 
