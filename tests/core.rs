@@ -83,10 +83,10 @@ fn children_are_clamped_and_release_parent_budget() {
     assert!((child.effective_budget_secs - 8.8).abs() < 1e-9);
     let root_with_child = manager.get_task("root").unwrap();
     assert!((root_with_child.child_reserved_secs - 8.8).abs() < 1e-9);
-    let sibling = manager
-        .start_task(StartTaskRequest::new("sibling", 0.1).with_parent("root"))
-        .unwrap();
-    assert!(!sibling.clamped);
+    assert!(matches!(
+        manager.start_task(StartTaskRequest::new("sibling", 0.1).with_parent("root")),
+        Err(TaskError::BudgetExhausted(_))
+    ));
     assert!(matches!(
         manager.finish_task(FinishTaskRequest::new("root")),
         Err(TaskError::ActiveChildren(_))
@@ -95,11 +95,39 @@ fn children_are_clamped_and_release_parent_budget() {
         .finish_task(FinishTaskRequest::new("child"))
         .unwrap();
     let root_after = manager.get_task("root").unwrap();
-    assert!((root_after.child_reserved_secs - 0.1).abs() < 1e-9);
+    assert!(root_after.child_reserved_secs.abs() < 1e-9);
     let sibling_after_release = manager
         .start_task(StartTaskRequest::new("sibling-after-release", 0.1).with_parent("root"))
         .unwrap();
     assert!(!sibling_after_release.clamped);
+}
+
+#[test]
+fn successive_children_cannot_erode_parent_reserve() {
+    let (_, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("reserve-root", 10.0))
+        .unwrap();
+    manager
+        .start_task(StartTaskRequest::new("child-a", 4.0).with_parent("reserve-root"))
+        .unwrap();
+    manager
+        .start_task(StartTaskRequest::new("child-b", 4.0).with_parent("reserve-root"))
+        .unwrap();
+    let child_a = manager
+        .adjust_task(AdjustTaskRequest::new("child-a").with_budget(8.0))
+        .unwrap();
+    assert!(child_a.clamped);
+    assert!((child_a.effective_budget_secs - 4.8).abs() < 1e-9);
+
+    let root = manager.get_task("reserve-root").unwrap();
+    assert!((root.adaptive_reserve_secs - 1.2).abs() < 1e-9);
+    assert!((root.child_reserved_secs - 8.8).abs() < 1e-9);
+    assert!(root.available_secs.abs() < 1e-9);
+    assert!(matches!(
+        manager.start_task(StartTaskRequest::new("child-c", 0.1).with_parent("reserve-root")),
+        Err(TaskError::BudgetExhausted(_))
+    ));
 }
 
 #[test]

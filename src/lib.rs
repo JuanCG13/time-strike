@@ -1183,12 +1183,12 @@ impl TaskManager {
         let ratio = phase
             .and_then(|phase| phase.reserve_ratio)
             .unwrap_or_else(|| mode.reserve_ratio());
-        let work_remaining = (remaining - task.child_reserved_secs).max(0.0);
         let reserve = if matches!(task.status, TaskStatus::Finished | TaskStatus::Exhausted) {
             0.0
         } else {
-            (work_remaining * ratio).min(work_remaining)
+            (remaining * ratio).min(remaining)
         };
+        let work_remaining = (remaining - task.child_reserved_secs).max(0.0);
         let interval = phase.and_then(|phase| phase.tick_interval_secs).unwrap_or(
             task.schedule
                 .tick_interval_secs
@@ -1247,8 +1247,8 @@ impl TaskManager {
         let ratio = phase
             .and_then(|phase| phase.reserve_ratio)
             .unwrap_or_else(|| effective_mode.reserve_ratio());
-        let work_remaining = (remaining - child_reserved).max(0.0);
-        (work_remaining * (1.0 - ratio)).max(0.0)
+        let reserve = (remaining * ratio).min(remaining);
+        (remaining - child_reserved - reserve).max(0.0)
     }
 
     fn snapshot_locked(&self, tasks: &HashMap<String, Task>, now: Duration) -> PersistedState {
