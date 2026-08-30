@@ -6,6 +6,7 @@ All notable improvements to Time Strike are recorded here.
 
 ### Added
 
+- 2026-08-30: initial checkpoints can now submit two to eight bounded structured plan steps with per-step duration and observable completion criteria; Time Strike validates the shape, derives the authoritative ETA from their sum, and reports the accepted count while retaining legacy note plans.
 - 2026-08-30: parent tasks now calculate their adaptive reserve before subtracting child reservations, preventing successive children from eroding validation and finalization time while preserving the existing API and O(1) allocation path.
 - 2026-08-29: MCP `finish_task` now rejects agent-requested `force=true`, preventing an agent from detaching unfinished children or discarding their reservations; the core override remains available to trusted host integrations and the input field remains compatible.
 - 2026-08-29: hosts can set `TIME_STRIKE_DEADLINE_UNIX_MS` before launching the MCP server; the wall deadline is converted once to an immutable monotonic limit that is enforced under the task lock during both creation and adjustment, rejects starts delayed past the limit, prevents authorized budget increases from bypassing it, and reports the active deadline authority.
