@@ -703,8 +703,7 @@ fn issue_action_lease(
     let action = action?.trim();
     let duration_seconds = estimated_seconds?;
     // Never serialize a rounded expiry that is later than the policy ceiling.
-    let expires_in_seconds =
-        (lease_ceiling_seconds.max(0.0) * 1000.0).floor() / 1000.0;
+    let expires_in_seconds = (lease_ceiling_seconds.max(0.0) * 1000.0).floor() / 1000.0;
     (duration_seconds <= expires_in_seconds).then(|| ActionLeaseOutput {
         lease_id: format!("{task_id}:{tick}"),
         task_id: task_id.to_owned(),
@@ -957,9 +956,7 @@ mod tests {
         assert!(lease.one_shot);
         assert!(issue_action_lease("task", 8, Some("Inspect"), Some(6.0), 5.0).is_none());
         assert!(issue_action_lease("task", 8, None, Some(1.0), 5.0).is_none());
-        assert!(
-            issue_action_lease("task", 8, Some("Inspect"), Some(1.0), 0.0009).is_none()
-        );
+        assert!(issue_action_lease("task", 8, Some("Inspect"), Some(1.0), 0.0009).is_none());
     }
 
     #[test]
