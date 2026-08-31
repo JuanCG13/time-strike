@@ -21,6 +21,7 @@ use time_strike::{
 const MIN_PLAN_STEPS: usize = 2;
 const MAX_PLAN_STEPS: usize = 8;
 const MAX_PLAN_FIELD_CHARS: usize = 160;
+const MAX_ACTION_CHARS: usize = 160;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -169,10 +170,20 @@ struct TickOutput {
     directive: String,
     must_plan: bool,
     planning_seconds_remaining: f64,
+    action_lease_ceiling_seconds: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     action_fits: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    action_lease: Option<ActionLeaseOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema, PartialEq)]
+struct ActionLeaseOutput {
+    lease_id: String,
+    duration_seconds: f64,
+    expires_in_seconds: f64,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -318,6 +329,8 @@ impl TimeStrikeServer {
         view: &TaskView,
         timing: &TaskTiming,
         decision: PolicyDecision,
+        tick: u64,
+        current_action: Option<&str>,
         action_seconds: Option<f64>,
         verbose: bool,
     ) -> TickOutput {
@@ -327,7 +340,21 @@ impl TimeStrikeServer {
         } else {
             decision.max_new_action_secs
         };
-        let action_fits = action_seconds.map(|seconds| seconds <= effective_max_action);
+        let action_lease_ceiling = effective_max_action.min(decision.next_check_secs);
+        let action_lease = issue_action_lease(
+            &view.task_id,
+            tick,
+            current_action,
+            action_seconds,
+            action_lease_ceiling,
+        );
+        let action_fits = action_seconds.map(|seconds| {
+            if current_action.is_some() {
+                action_lease.is_some()
+            } else {
+                seconds <= effective_max_action
+            }
+        });
         TickOutput {
             remaining_seconds: round3(decision.remaining_secs),
             actual_elapsed_seconds: round3(timing.actual_elapsed_secs),
@@ -357,7 +384,9 @@ impl TimeStrikeServer {
             } else {
                 0.0
             }),
+            action_lease_ceiling_seconds: round3(action_lease_ceiling),
             action_fits,
+            action_lease,
             reason: verbose.then(|| decision.reason.to_string()),
         }
     }
@@ -432,12 +461,16 @@ impl TimeStrikeServer {
     }
 
     #[tool(
-        description = "Return the mandatory next directive, remaining budget, maximum action duration, and deadline pressure."
+        description = "Return the mandatory next directive and deadline pressure. Supplying current_action plus its ETA can grant a bounded action_lease for host enforcement."
     )]
     async fn tick(
         &self,
         Parameters(input): Parameters<TickInput>,
     ) -> Result<Json<TickOutput>, String> {
+        validate_action_proposal(
+            input.current_action.as_deref(),
+            input.current_action_estimated_seconds,
+        )?;
         let task_id = self.resolve_task_id(input.task_id)?;
         let (outcome, timing) = self
             .manager
@@ -448,11 +481,13 @@ impl TimeStrikeServer {
             input.progress_percent,
             input.estimated_remaining_work_seconds,
         );
-        let _ = input.current_action;
+        let tick = outcome.tick;
         Ok(Json(Self::tick_output(
             &outcome.task,
             &timing,
             decision,
+            tick,
+            input.current_action.as_deref(),
             input.current_action_estimated_seconds,
             input.verbose || self.default_verbose,
         )))
@@ -619,7 +654,7 @@ impl TimeStrikeServer {
 #[tool_handler(
     name = "time-strike",
     version = "0.2.0",
-    instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint before costly work with plan_complete=true and 2-8 plan_steps; each needs action, estimated_seconds, and done_when. Call tick before and after searches, edits, tests, delegation, and tool calls. Never start work longer than max_new_action_seconds; split it. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
+    instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint before costly work with plan_complete=true and 2-8 plan_steps; each needs action, estimated_seconds, and done_when. Before costly work call tick with current_action and current_action_estimated_seconds, then proceed only with the returned action_lease and its relative expiry. Call tick after searches, edits, tests, delegation, and tool calls. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
 )]
 impl ServerHandler for TimeStrikeServer {}
 
@@ -629,6 +664,45 @@ fn round3(value: f64) -> f64 {
 
 fn planning_budget_secs(total_secs: f64) -> f64 {
     (total_secs * 0.05).clamp(2.0, 60.0).min(total_secs * 0.15)
+}
+
+fn validate_action_proposal(
+    action: Option<&str>,
+    estimated_seconds: Option<f64>,
+) -> Result<(), String> {
+    if let Some(action) = action {
+        let action = action.trim();
+        if action.is_empty() {
+            return Err("current_action must not be empty".into());
+        }
+        if action.chars().count() > MAX_ACTION_CHARS {
+            return Err(format!(
+                "current_action must be at most {MAX_ACTION_CHARS} characters"
+            ));
+        }
+    }
+    if let Some(seconds) = estimated_seconds
+        && (!seconds.is_finite() || seconds <= 0.0)
+    {
+        return Err("current_action_estimated_seconds must be finite and > 0".into());
+    }
+    Ok(())
+}
+
+fn issue_action_lease(
+    task_id: &str,
+    tick: u64,
+    action: Option<&str>,
+    estimated_seconds: Option<f64>,
+    lease_ceiling_seconds: f64,
+) -> Option<ActionLeaseOutput> {
+    let _ = action?;
+    let duration_seconds = estimated_seconds?;
+    (duration_seconds <= lease_ceiling_seconds).then(|| ActionLeaseOutput {
+        lease_id: format!("{task_id}:{tick}"),
+        duration_seconds: round3(duration_seconds),
+        expires_in_seconds: round3(duration_seconds),
+    })
 }
 
 struct StructuredPlan {
@@ -858,5 +932,24 @@ mod tests {
         ];
         assert!(structured_plan(&invalid_estimate, true).is_err());
         assert!(structured_plan(&invalid_estimate, false).is_err());
+    }
+
+    #[test]
+    fn action_leases_are_bounded_and_unique_to_the_tick() {
+        let lease = issue_action_lease("task", 7, Some("Inspect"), Some(4.0), 5.0).unwrap();
+        assert_eq!(lease.lease_id, "task:7");
+        assert_eq!(lease.duration_seconds, 4.0);
+        assert_eq!(lease.expires_in_seconds, 4.0);
+        assert!(issue_action_lease("task", 8, Some("Inspect"), Some(6.0), 5.0).is_none());
+        assert!(issue_action_lease("task", 8, None, Some(1.0), 5.0).is_none());
+    }
+
+    #[test]
+    fn invalid_action_proposals_fail_closed() {
+        assert!(validate_action_proposal(Some(""), Some(1.0)).is_err());
+        assert!(validate_action_proposal(Some("Inspect"), Some(-1.0)).is_err());
+        assert!(validate_action_proposal(Some("Inspect"), Some(f64::NAN)).is_err());
+        assert!(validate_action_proposal(Some(&"a".repeat(161)), Some(1.0)).is_err());
+        assert!(validate_action_proposal(Some("Inspect"), Some(1.0)).is_ok());
     }
 }

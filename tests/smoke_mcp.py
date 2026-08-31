@@ -137,7 +137,26 @@ def smoke_future_deadline_and_adjustments():
         })
         assert not planned.get("isError"), planned
         assert (planned.get("structuredContent") or {})["plan_step_count"] == 3
-        ticked = client.call(7, "tick", {
+        invalid_action = client.call(7, "tick", {
+            "task_id": "host-task", "current_action": "Invalid action",
+            "current_action_estimated_seconds": -1,
+        })
+        assert invalid_action.get("isError") is True, invalid_action
+
+        leased = client.call(8, "tick", {
+            "task_id": "host-task", "current_action": "Inspect one file",
+            "current_action_estimated_seconds": 1,
+        })
+        assert not leased.get("isError"), leased
+        leased_content = leased.get("structuredContent") or {}
+        assert leased_content["action_fits"] is True
+        assert leased_content["action_lease"] == {
+            "lease_id": "host-task:2",
+            "duration_seconds": 1.0,
+            "expires_in_seconds": 1.0,
+        }
+
+        ticked = client.call(9, "tick", {
             "task_id": "host-task", "current_action": "Run an oversized action",
             "current_action_estimated_seconds": 240,
         })
@@ -145,18 +164,19 @@ def smoke_future_deadline_and_adjustments():
         tick_content = ticked.get("structuredContent") or {}
         assert tick_content["directive"] == "split_action"
         assert tick_content["action_fits"] is False
+        assert "action_lease" not in tick_content
         assert tick_content["must_plan"] is False
         assert tick_content["elapsed_seconds"] == tick_content["accounted_elapsed_seconds"]
         assert tick_content["actual_elapsed_seconds"] >= tick_content["accounted_elapsed_seconds"]
         assert tick_content["overrun_seconds"] == 0
         assert tick_content["deadline_met"] is True
 
-        added = client.call(8, "adjust_task", {"task_id": "host-task", "add_seconds": 60})
+        added = client.call(10, "adjust_task", {"task_id": "host-task", "add_seconds": 60})
         assert not added.get("isError"), added
         added_content = added.get("structuredContent") or {}
         assert added_content["clamped"] is True
         assert added_content["total_budget_seconds"] <= 30
-        set_total = client.call(9, "adjust_task", {
+        set_total = client.call(11, "adjust_task", {
             "task_id": "host-task", "set_total_seconds": 120,
         })
         assert not set_total.get("isError"), set_total
@@ -164,7 +184,7 @@ def smoke_future_deadline_and_adjustments():
         assert set_content["clamped"] is True
         assert set_content["total_budget_seconds"] <= 30
 
-        finished = client.call(10, "finish_task", {"task_id": "host-task"})
+        finished = client.call(12, "finish_task", {"task_id": "host-task"})
         assert not finished.get("isError"), finished
         return start_content["remaining_seconds"]
     finally:

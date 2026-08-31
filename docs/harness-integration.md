@@ -8,9 +8,10 @@ Time Strike is an MCP stdio server. Register the absolute `time-strike` binary p
 At task start, call start_task with the hard budget.
 Call tick before and after expensive work, when next_check_seconds elapses,
 before delegation, before validation, and before delivery.
-Respect mode, schedule, max_new_action_seconds, must_converge,
+Respect mode, schedule, max_new_action_seconds, action_lease, must_converge,
 must_validate, must_finalize, and must_stop.
-Never start work materially longer than max_new_action_seconds.
+Before costly work, send current_action and current_action_estimated_seconds to tick.
+Start only with a returned action_lease and enforce expires_in_seconds locally.
 Submit the first checkpoint with plan_complete=true and two to eight plan_steps.
 Each step should contain one action, estimated_seconds, and an observable done_when.
 Use later checkpoints only for meaningful progress or ETA changes.

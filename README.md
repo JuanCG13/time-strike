@@ -200,7 +200,7 @@ start_task → tick → checkpoint → finish_task
 
 1. Call `start_task` once with `budget_seconds`.
 2. Call `tick` before and after costly work, and whenever `next_check_seconds` elapses.
-3. Do not start an action materially longer than `max_new_action_seconds`.
+3. Before costly work, call `tick` with `current_action` and `current_action_estimated_seconds`; start it only when an `action_lease` is returned, and enforce its relative expiry in the host.
 4. Submit the initial `checkpoint` with two to eight structured `plan_steps` (`action`, `estimated_seconds`, and `done_when`), then checkpoint only after meaningful progress or ETA changes. The legacy compact `note` plan remains supported.
 5. Obey `must_converge`, `must_validate`, `must_finalize`, and `must_stop`. These are control signals for the calling agent; Time Strike cannot force an LLM to call a tool.
 6. Call `finish_task` before delivering the result. `adjust_task` is optional when scope changes.
@@ -208,7 +208,7 @@ start_task → tick → checkpoint → finish_task
 Example compact `tick` result:
 
 ```json
-{"remaining_seconds":417,"mode":"converge","schedule":"behind","max_new_action_seconds":95,"next_check_seconds":30,"must_finalize":false,"must_stop":false}
+{"remaining_seconds":417,"mode":"converge","schedule":"behind","max_new_action_seconds":95,"next_check_seconds":30,"action_lease_ceiling_seconds":30,"action_lease":{"lease_id":"review:7","duration_seconds":20,"expires_in_seconds":20},"must_finalize":false,"must_stop":false}
 ```
 
 ## Troubleshooting

@@ -6,6 +6,7 @@ All notable improvements to Time Strike are recorded here.
 
 ### Added
 
+- 2026-08-31: `tick` can now issue a bounded, host-enforceable action lease when an action and positive finite ETA fit before the next mandatory check; invalid proposals fail before mutating task state, while clients that omit action details retain the legacy advisory response.
 - 2026-08-30: initial checkpoints can now submit two to eight bounded structured plan steps with per-step duration and observable completion criteria; Time Strike validates the shape, derives the authoritative ETA from their sum, and reports the accepted count while retaining legacy note plans.
 - 2026-08-30: parent tasks now calculate their adaptive reserve before subtracting child reservations, preventing successive children from eroding validation and finalization time while preserving the existing API and O(1) allocation path.
 - 2026-08-29: MCP `finish_task` now rejects agent-requested `force=true`, preventing an agent from detaching unfinished children or discarding their reservations; the core override remains available to trusted host integrations and the input field remains compatible.
