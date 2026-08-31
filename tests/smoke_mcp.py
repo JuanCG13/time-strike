@@ -2,10 +2,105 @@
 import json
 import os
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 binary = Path(__file__).resolve().parents[1] / "target/release/time-strike"
+
+
+class ActionLeaseGuard:
+    """Minimal host-side ledger for the documented one-shot lease contract."""
+
+    def __init__(self, hard_deadline_monotonic):
+        self.hard_deadline_monotonic = hard_deadline_monotonic
+        self.lock = threading.Lock()
+        self.leases = {}
+        self.active_by_task = {}
+
+    def register(self, request_started_monotonic, action, eta, lease):
+        assert lease["expiry_anchor"] == "tick_request_started"
+        assert lease["one_shot"] is True
+        assert lease["action"] == action.strip()
+        assert lease["duration_seconds"] == eta
+        record = {
+            "task_id": lease["task_id"],
+            "action": action.strip(),
+            "duration_seconds": eta,
+            "expires_at": min(
+                request_started_monotonic + lease["expires_in_seconds"],
+                self.hard_deadline_monotonic,
+            ),
+            "consumed": False,
+            "superseded": False,
+        }
+        with self.lock:
+            previous = self.active_by_task.get(lease["task_id"])
+            if previous in self.leases:
+                self.leases[previous]["superseded"] = True
+            self.leases[lease["lease_id"]] = record
+            self.active_by_task[lease["task_id"]] = lease["lease_id"]
+
+    def consume(self, lease_id, action, eta, now_monotonic):
+        with self.lock:
+            record = self.leases.get(lease_id)
+            if record is None or record["consumed"] or record["superseded"]:
+                return False
+            if record["action"] != action.strip() or record["duration_seconds"] != eta:
+                return False
+            if now_monotonic + eta > record["expires_at"]:
+                return False
+            record["consumed"] = True
+            return True
+
+
+def verify_action_lease_enforcement(lease):
+    request_started = 100.0
+
+    mismatch = ActionLeaseGuard(200.0)
+    mismatch.register(request_started, "Inspect one file", 1.0, lease)
+    assert not mismatch.consume(lease["lease_id"], "Delete one file", 1.0, 100.0)
+    assert not mismatch.consume(lease["lease_id"], "Inspect one file", 0.5, 100.0)
+    assert not mismatch.consume("host-task:999", "Inspect one file", 1.0, 100.0)
+
+    one_shot = ActionLeaseGuard(200.0)
+    one_shot.register(request_started, "Inspect one file", 1.0, lease)
+    barrier = threading.Barrier(3)
+
+    def consume_concurrently():
+        barrier.wait()
+        return one_shot.consume(lease["lease_id"], "Inspect one file", 1.0, 100.0)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(consume_concurrently) for _ in range(2)]
+        barrier.wait()
+        assert sorted(future.result() for future in futures) == [False, True]
+    assert not one_shot.consume(lease["lease_id"], "Inspect one file", 1.0, 100.0)
+
+    superseded = ActionLeaseGuard(200.0)
+    superseded.register(request_started, "Inspect one file", 1.0, lease)
+    replacement = dict(lease, lease_id="host-task:3", action="Inspect two files")
+    superseded.register(request_started, "Inspect two files", 1.0, replacement)
+    assert not superseded.consume(
+        lease["lease_id"], "Inspect one file", 1.0, request_started
+    )
+    assert superseded.consume(
+        replacement["lease_id"], "Inspect two files", 1.0, request_started
+    )
+
+    delayed = ActionLeaseGuard(200.0)
+    delayed.register(request_started, "Inspect one file", 1.0, lease)
+    expires_at = request_started + lease["expires_in_seconds"]
+    assert not delayed.consume(
+        lease["lease_id"], "Inspect one file", 1.0, expires_at - 0.5
+    )
+
+    deadline_clamped = ActionLeaseGuard(100.5)
+    deadline_clamped.register(request_started, "Inspect one file", 1.0, lease)
+    assert not deadline_clamped.consume(
+        lease["lease_id"], "Inspect one file", 1.0, request_started
+    )
 
 
 def clean_env():
@@ -150,11 +245,24 @@ def smoke_future_deadline_and_adjustments():
         assert not leased.get("isError"), leased
         leased_content = leased.get("structuredContent") or {}
         assert leased_content["action_fits"] is True
-        assert leased_content["action_lease"] == {
+        action_lease = leased_content["action_lease"]
+        assert action_lease == {
             "lease_id": "host-task:2",
+            "task_id": "host-task",
+            "action": "Inspect one file",
             "duration_seconds": 1.0,
-            "expires_in_seconds": 1.0,
+            "expires_in_seconds": action_lease["expires_in_seconds"],
+            "expiry_anchor": "tick_request_started",
+            "one_shot": True,
         }
+        assert action_lease["expires_in_seconds"] >= action_lease["duration_seconds"]
+        assert action_lease["expires_in_seconds"] <= leased_content[
+            "action_lease_ceiling_seconds"
+        ]
+        assert leased_content["action_lease_ceiling_seconds"] - action_lease[
+            "expires_in_seconds"
+        ] <= 0.001
+        verify_action_lease_enforcement(action_lease)
 
         ticked = client.call(9, "tick", {
             "task_id": "host-task", "current_action": "Run an oversized action",

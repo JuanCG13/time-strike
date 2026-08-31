@@ -37,7 +37,9 @@ A child budget is clamped to the parent's currently available work budget. The p
 
 ## Action leases
 
-The MCP adapter converts an action proposal already carried by `tick` into a bounded admission lease without adding another tool call. Its ceiling is the smaller of the policy's maximum new action and the next mandatory check. The lease identifier combines the task id and monotonic tick sequence; it is a correlation id, not a secret capability. Expiry is relative, so no wall clock enters execution. The server does not execute or police external work: the trusted host/harness must accept only leases returned on its current MCP connection, invalidate them on reconnect, and stop or re-check when they expire. Lease calculation is O(1) and adds no lock or persistence operation.
+The MCP adapter converts an action proposal already carried by `tick` into a bounded admission lease without adding another tool call. Its ceiling is the smaller of the policy's maximum new action and the next mandatory check. The response binds the lease to the normalized action, exact ETA and task; `one_shot=true` requires atomic consumption. The `task:tick` identifier is only a correlation id, never a capability that the host may trust by shape or value.
+
+Before sending `tick`, the trusted host records a monotonic `tick_request_started`. It registers only a lease returned by that request on the current MCP connection, verifies the response binding, atomically supersedes any older unconsumed lease for the task and stores `expires_at = min(tick_request_started + expires_in_seconds, host_deadline)`. At consumption it atomically rejects unknown, superseded, expired, previously consumed, concurrently consumed or action/ETA-mismatched leases, and starts work only when the complete ETA still fits before `expires_at`. Reconnect invalidates the ledger. The expiry never restarts when the agent presents or uses a lease, and wall clock never enters execution. The server does not execute external work; lease calculation remains O(1) with no additional server lock or persistence operation.
 
 ## Persistence
 

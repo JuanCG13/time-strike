@@ -10,8 +10,8 @@ Call tick before and after expensive work, when next_check_seconds elapses,
 before delegation, before validation, and before delivery.
 Respect mode, schedule, max_new_action_seconds, action_lease, must_converge,
 must_validate, must_finalize, and must_stop.
-Before costly work, send current_action and current_action_estimated_seconds to tick.
-Start only with a returned action_lease and enforce expires_in_seconds locally.
+Before costly work, capture monotonic time, then send current_action and its ETA to tick.
+Consume the bound one-shot action_lease atomically before its anchored expiry.
 Submit the first checkpoint with plan_complete=true and two to eight plan_steps.
 Each step should contain one action, estimated_seconds, and an observable done_when.
 Use later checkpoints only for meaningful progress or ETA changes.
@@ -42,6 +42,17 @@ The `start_task` result reports `deadline_authority` as `host_absolute` when
 this guard is active, or `agent_relative` in compatibility mode. The harness
 must still enforce inference and tool timeouts externally; the MCP server does
 not acquire those privileges.
+
+For every `tick` action proposal, record monotonic time immediately before sending the
+request. On the response, verify that `task_id`, normalized `action` and
+`duration_seconds` equal that proposal, that `expiry_anchor` is
+`tick_request_started`, and that `one_shot` is true. Store the lease only in an
+ephemeral ledger for the current MCP connection. Atomically supersede the prior lease
+for that task and set its expiration to the earlier of request-start plus
+`expires_in_seconds` and the host's hard deadline. Consumption must atomically reject
+unknown or invented ids, a different action or ETA, replay, concurrent use,
+superseded leases and any action whose full ETA no longer fits. Never parse or trust a
+`task:tick` id without the matching ledger record, and never restart expiry at use.
 
 ## Subagents
 

@@ -182,8 +182,12 @@ struct TickOutput {
 #[derive(Debug, Serialize, JsonSchema, PartialEq)]
 struct ActionLeaseOutput {
     lease_id: String,
+    task_id: String,
+    action: String,
     duration_seconds: f64,
     expires_in_seconds: f64,
+    expiry_anchor: String,
+    one_shot: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -696,12 +700,19 @@ fn issue_action_lease(
     estimated_seconds: Option<f64>,
     lease_ceiling_seconds: f64,
 ) -> Option<ActionLeaseOutput> {
-    let _ = action?;
+    let action = action?.trim();
     let duration_seconds = estimated_seconds?;
-    (duration_seconds <= lease_ceiling_seconds).then(|| ActionLeaseOutput {
+    // Never serialize a rounded expiry that is later than the policy ceiling.
+    let expires_in_seconds =
+        (lease_ceiling_seconds.max(0.0) * 1000.0).floor() / 1000.0;
+    (duration_seconds <= expires_in_seconds).then(|| ActionLeaseOutput {
         lease_id: format!("{task_id}:{tick}"),
-        duration_seconds: round3(duration_seconds),
-        expires_in_seconds: round3(duration_seconds),
+        task_id: task_id.to_owned(),
+        action: action.to_owned(),
+        duration_seconds,
+        expires_in_seconds,
+        expiry_anchor: "tick_request_started".into(),
+        one_shot: true,
     })
 }
 
@@ -938,10 +949,17 @@ mod tests {
     fn action_leases_are_bounded_and_unique_to_the_tick() {
         let lease = issue_action_lease("task", 7, Some("Inspect"), Some(4.0), 5.0).unwrap();
         assert_eq!(lease.lease_id, "task:7");
+        assert_eq!(lease.task_id, "task");
+        assert_eq!(lease.action, "Inspect");
         assert_eq!(lease.duration_seconds, 4.0);
-        assert_eq!(lease.expires_in_seconds, 4.0);
+        assert_eq!(lease.expires_in_seconds, 5.0);
+        assert_eq!(lease.expiry_anchor, "tick_request_started");
+        assert!(lease.one_shot);
         assert!(issue_action_lease("task", 8, Some("Inspect"), Some(6.0), 5.0).is_none());
         assert!(issue_action_lease("task", 8, None, Some(1.0), 5.0).is_none());
+        assert!(
+            issue_action_lease("task", 8, Some("Inspect"), Some(1.0), 0.0009).is_none()
+        );
     }
 
     #[test]
