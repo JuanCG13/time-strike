@@ -19,14 +19,19 @@ class ActionLeaseGuard:
         self.leases = {}
         self.active_by_task = {}
 
-    def register(self, request_started_monotonic, action, eta, lease):
-        assert lease["expiry_anchor"] == "tick_request_started"
-        assert lease["one_shot"] is True
-        assert lease["action"] == action.strip()
-        assert lease["duration_seconds"] == eta
+    def register(self, request_started_monotonic, task_id, action, eta, lease):
+        normalized_action = action.strip()
+        if (
+            lease["expiry_anchor"] != "tick_request_started"
+            or lease["one_shot"] is not True
+            or lease["task_id"] != task_id
+            or lease["action"] != normalized_action
+            or lease["duration_seconds"] != eta
+        ):
+            return False
         record = {
-            "task_id": lease["task_id"],
-            "action": action.strip(),
+            "task_id": task_id,
+            "action": normalized_action,
             "duration_seconds": eta,
             "expires_at": min(
                 request_started_monotonic + lease["expires_in_seconds"],
@@ -41,13 +46,18 @@ class ActionLeaseGuard:
                 self.leases[previous]["superseded"] = True
             self.leases[lease["lease_id"]] = record
             self.active_by_task[lease["task_id"]] = lease["lease_id"]
+        return True
 
-    def consume(self, lease_id, action, eta, now_monotonic):
+    def consume(self, lease_id, task_id, action, eta, now_monotonic):
         with self.lock:
             record = self.leases.get(lease_id)
             if record is None or record["consumed"] or record["superseded"]:
                 return False
-            if record["action"] != action.strip() or record["duration_seconds"] != eta:
+            if (
+                record["task_id"] != task_id
+                or record["action"] != action.strip()
+                or record["duration_seconds"] != eta
+            ):
                 return False
             if now_monotonic + eta > record["expires_at"]:
                 return False
@@ -57,49 +67,84 @@ class ActionLeaseGuard:
 
 def verify_action_lease_enforcement(lease):
     request_started = 100.0
+    task_id = lease["task_id"]
+
+    registration_binding = ActionLeaseGuard(200.0)
+    assert not registration_binding.register(
+        request_started, "different-task", "Inspect one file", 1.0, lease
+    )
+    assert registration_binding.leases == {}
+    assert registration_binding.active_by_task == {}
+
+    task_binding = ActionLeaseGuard(200.0)
+    assert task_binding.register(
+        request_started, task_id, "Inspect one file", 1.0, lease
+    )
+    assert not task_binding.consume(
+        lease["lease_id"], "different-task", "Inspect one file", 1.0, 100.0
+    )
+    assert task_binding.consume(
+        lease["lease_id"], task_id, "Inspect one file", 1.0, 100.0
+    )
 
     mismatch = ActionLeaseGuard(200.0)
-    mismatch.register(request_started, "Inspect one file", 1.0, lease)
-    assert not mismatch.consume(lease["lease_id"], "Delete one file", 1.0, 100.0)
-    assert not mismatch.consume(lease["lease_id"], "Inspect one file", 0.5, 100.0)
-    assert not mismatch.consume("host-task:999", "Inspect one file", 1.0, 100.0)
+    assert mismatch.register(request_started, task_id, "Inspect one file", 1.0, lease)
+    assert not mismatch.consume(
+        lease["lease_id"], task_id, "Delete one file", 1.0, 100.0
+    )
+    assert not mismatch.consume(
+        lease["lease_id"], task_id, "Inspect one file", 0.5, 100.0
+    )
+    assert not mismatch.consume(
+        "host-task:999", task_id, "Inspect one file", 1.0, 100.0
+    )
 
     one_shot = ActionLeaseGuard(200.0)
-    one_shot.register(request_started, "Inspect one file", 1.0, lease)
+    assert one_shot.register(request_started, task_id, "Inspect one file", 1.0, lease)
     barrier = threading.Barrier(3)
 
     def consume_concurrently():
         barrier.wait()
-        return one_shot.consume(lease["lease_id"], "Inspect one file", 1.0, 100.0)
+        return one_shot.consume(
+            lease["lease_id"], task_id, "Inspect one file", 1.0, 100.0
+        )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(consume_concurrently) for _ in range(2)]
         barrier.wait()
         assert sorted(future.result() for future in futures) == [False, True]
-    assert not one_shot.consume(lease["lease_id"], "Inspect one file", 1.0, 100.0)
+    assert not one_shot.consume(
+        lease["lease_id"], task_id, "Inspect one file", 1.0, 100.0
+    )
 
     superseded = ActionLeaseGuard(200.0)
-    superseded.register(request_started, "Inspect one file", 1.0, lease)
+    assert superseded.register(
+        request_started, task_id, "Inspect one file", 1.0, lease
+    )
     replacement = dict(lease, lease_id="host-task:3", action="Inspect two files")
-    superseded.register(request_started, "Inspect two files", 1.0, replacement)
+    assert superseded.register(
+        request_started, task_id, "Inspect two files", 1.0, replacement
+    )
     assert not superseded.consume(
-        lease["lease_id"], "Inspect one file", 1.0, request_started
+        lease["lease_id"], task_id, "Inspect one file", 1.0, request_started
     )
     assert superseded.consume(
-        replacement["lease_id"], "Inspect two files", 1.0, request_started
+        replacement["lease_id"], task_id, "Inspect two files", 1.0, request_started
     )
 
     delayed = ActionLeaseGuard(200.0)
-    delayed.register(request_started, "Inspect one file", 1.0, lease)
+    assert delayed.register(request_started, task_id, "Inspect one file", 1.0, lease)
     expires_at = request_started + lease["expires_in_seconds"]
     assert not delayed.consume(
-        lease["lease_id"], "Inspect one file", 1.0, expires_at - 0.5
+        lease["lease_id"], task_id, "Inspect one file", 1.0, expires_at - 0.5
     )
 
     deadline_clamped = ActionLeaseGuard(100.5)
-    deadline_clamped.register(request_started, "Inspect one file", 1.0, lease)
+    assert deadline_clamped.register(
+        request_started, task_id, "Inspect one file", 1.0, lease
+    )
     assert not deadline_clamped.consume(
-        lease["lease_id"], "Inspect one file", 1.0, request_started
+        lease["lease_id"], task_id, "Inspect one file", 1.0, request_started
     )
 
 
