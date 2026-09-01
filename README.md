@@ -4,6 +4,10 @@ Time Strike is a small, native Rust [Model Context Protocol (MCP)](https://model
 
 Time Strike is deliberately local-first: it does not run an LLM, make network requests, inspect repositories, execute shell commands, schedule calendar events, or send messages. It exposes five MCP tools over stdio and keeps the policy engine independent from MCP so it can be tested and embedded predictably.
 
+## Latest changes
+
+**v0.2.1:** `tick` can issue a bounded one-shot action lease with no additional MCP call. The host binds it to the task, action, ETA and monotonic expiry, and duplicate registration fails closed so retries or concurrent delivery cannot restore consumed authority. See the [changelog](CHANGELOG.md#021---2026-09-01).
+
 ## Features
 
 - Monotonic runtime accounting using `std::time::Instant`.

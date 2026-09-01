@@ -41,6 +41,8 @@ class ActionLeaseGuard:
             "superseded": False,
         }
         with self.lock:
+            if lease["lease_id"] in self.leases:
+                return False
             previous = self.active_by_task.get(lease["task_id"])
             if previous in self.leases:
                 self.leases[previous]["superseded"] = True
@@ -115,6 +117,57 @@ def verify_action_lease_enforcement(lease):
         assert sorted(future.result() for future in futures) == [False, True]
     assert not one_shot.consume(
         lease["lease_id"], task_id, "Inspect one file", 1.0, 100.0
+    )
+
+    duplicate_before_consume = ActionLeaseGuard(200.0)
+    assert duplicate_before_consume.register(
+        request_started, task_id, "Inspect one file", 1.0, lease
+    )
+    assert not duplicate_before_consume.register(
+        request_started, task_id, "Inspect one file", 1.0, lease
+    )
+    assert duplicate_before_consume.active_by_task[task_id] == lease["lease_id"]
+    assert duplicate_before_consume.consume(
+        lease["lease_id"], task_id, "Inspect one file", 1.0, request_started
+    )
+    assert not duplicate_before_consume.consume(
+        lease["lease_id"], task_id, "Inspect one file", 1.0, request_started
+    )
+
+    duplicate_after_consume = ActionLeaseGuard(200.0)
+    assert duplicate_after_consume.register(
+        request_started, task_id, "Inspect one file", 1.0, lease
+    )
+    assert duplicate_after_consume.consume(
+        lease["lease_id"], task_id, "Inspect one file", 1.0, request_started
+    )
+    assert not duplicate_after_consume.register(
+        request_started, task_id, "Inspect one file", 1.0, lease
+    )
+    assert duplicate_after_consume.active_by_task[task_id] == lease["lease_id"]
+    assert not duplicate_after_consume.consume(
+        lease["lease_id"], task_id, "Inspect one file", 1.0, request_started
+    )
+
+    concurrent_registration = ActionLeaseGuard(200.0)
+    registration_barrier = threading.Barrier(3)
+
+    def register_concurrently():
+        registration_barrier.wait()
+        return concurrent_registration.register(
+            request_started, task_id, "Inspect one file", 1.0, lease
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(register_concurrently) for _ in range(2)]
+        registration_barrier.wait()
+        assert sorted(future.result() for future in futures) == [False, True]
+    assert concurrent_registration.active_by_task[task_id] == lease["lease_id"]
+    assert concurrent_registration.consume(
+        lease["lease_id"], task_id, "Inspect one file", 1.0, request_started
+    )
+    assert not concurrent_registration.consume(
+        lease["lease_id"], task_id, "Inspect one file", 1.0, request_started
     )
 
     superseded = ActionLeaseGuard(200.0)

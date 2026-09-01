@@ -657,7 +657,7 @@ impl TimeStrikeServer {
 
 #[tool_handler(
     name = "time-strike",
-    version = "0.2.0",
+    version = "0.2.1",
     instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint before costly work with plan_complete=true and 2-8 plan_steps; each needs action, estimated_seconds, and done_when. Before costly work call tick with current_action and current_action_estimated_seconds, then proceed only with the returned action_lease and its relative expiry. Call tick after searches, edits, tests, delegation, and tool calls. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
 )]
 impl ServerHandler for TimeStrikeServer {}
