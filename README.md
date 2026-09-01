@@ -4,6 +4,10 @@ Time Strike is a small, native Rust [Model Context Protocol (MCP)](https://model
 
 Time Strike is deliberately local-first: it does not run an LLM, make network requests, inspect repositories, execute shell commands, schedule calendar events, or send messages. It exposes five MCP tools over stdio and keeps the policy engine independent from MCP so it can be tested and embedded predictably.
 
+## Latest changes
+
+**v0.2.1:** `tick` can issue a bounded one-shot action lease with no additional MCP call. The host binds it to the task, action, ETA and monotonic expiry, and duplicate registration fails closed so retries or concurrent delivery cannot restore consumed authority. See the [changelog](CHANGELOG.md#021---2026-09-01).
+
 ## Features
 
 - Monotonic runtime accounting using `std::time::Instant`.
@@ -200,7 +204,7 @@ start_task → tick → checkpoint → finish_task
 
 1. Call `start_task` once with `budget_seconds`.
 2. Call `tick` before and after costly work, and whenever `next_check_seconds` elapses.
-3. Do not start an action materially longer than `max_new_action_seconds`.
+3. Before costly work, capture host monotonic time and call `tick` with `current_action` and `current_action_estimated_seconds`; the host may consume the returned `action_lease` exactly once only for that normalized action and ETA, before the request-anchored expiry and hard deadline.
 4. Submit the initial `checkpoint` with two to eight structured `plan_steps` (`action`, `estimated_seconds`, and `done_when`), then checkpoint only after meaningful progress or ETA changes. The legacy compact `note` plan remains supported.
 5. Obey `must_converge`, `must_validate`, `must_finalize`, and `must_stop`. These are control signals for the calling agent; Time Strike cannot force an LLM to call a tool.
 6. Call `finish_task` before delivering the result. `adjust_task` is optional when scope changes.
@@ -208,7 +212,7 @@ start_task → tick → checkpoint → finish_task
 Example compact `tick` result:
 
 ```json
-{"remaining_seconds":417,"mode":"converge","schedule":"behind","max_new_action_seconds":95,"next_check_seconds":30,"must_finalize":false,"must_stop":false}
+{"remaining_seconds":417,"mode":"converge","schedule":"behind","max_new_action_seconds":95,"next_check_seconds":30,"action_lease_ceiling_seconds":30,"action_lease":{"lease_id":"review:7","task_id":"review","action":"Inspect one file","duration_seconds":20,"expires_in_seconds":30,"expiry_anchor":"tick_request_started","one_shot":true},"must_finalize":false,"must_stop":false}
 ```
 
 ## Troubleshooting
