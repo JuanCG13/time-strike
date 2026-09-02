@@ -4,6 +4,7 @@
 //! The core deliberately has no async or MCP-specific state.  A monotonic clock
 //! is injected so the same policy can be exercised deterministically in tests.
 
+pub mod enforcement;
 pub mod policy;
 
 use fs2::FileExt;

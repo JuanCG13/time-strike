@@ -57,6 +57,14 @@ a different task, action or ETA, replay, duplicate registration, concurrent use,
 superseded leases and any action whose full ETA no longer fits. Never parse or trust a
 `task:tick` id without the matching ledger record, and never restart expiry at use.
 
+Rust hosts can apply this contract directly with
+`time_strike::enforcement::{ActionLeaseGrant, ActionLeaseLedger}`. Construct one
+ledger per MCP connection using the host's absolute monotonic deadline, call
+`register` with the recorded request-start instant and exact proposal, then call
+`consume` immediately before dispatching external work. A reconnect must create a
+fresh ledger. Other host languages must preserve the same atomicity and fail-closed
+semantics.
+
 ## Subagents
 
 Call `tick` before delegation. Start each child with `parent_task_id`; Time Strike clamps the child request to parent availability. Preserve parent time for integration, validation, and finalization. Concurrent agents must share one long-lived MCP server process to share task state.

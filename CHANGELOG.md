@@ -12,6 +12,12 @@ All notable improvements to Time Strike are recorded here.
 - 2026-08-29: hosts can set `TIME_STRIKE_DEADLINE_UNIX_MS` before launching the MCP server; the wall deadline is converted once to an immutable monotonic limit that is enforced under the task lock during both creation and adjustment, rejects starts delayed past the limit, prevents authorized budget increases from bypassing it, and reports the active deadline authority.
 - 2026-08-28: `tick` now reports actual elapsed time, budget-accounted elapsed time, overrun, and deadline compliance separately; actual elapsed time also survives persistence without changing the existing `TaskView` layout or its live/finish elapsed semantics, and legacy v2 snapshots remain recoverable.
 
+## [0.2.2] - 2026-09-02
+
+### Added
+
+- Added a reusable Rust `ActionLeaseLedger` for host/harness enforcement. It validates the exact task, normalized action, ETA and request anchor, atomically rejects duplicate registration and concurrent consumption, supersedes stale authority, prevents replay, and clamps execution to the host's monotonic hard deadline. This moves enforcement from a smoke-test reference into a production API without adding an MCP call, network dependency or persistence write.
+
 ## [0.2.1] - 2026-09-01
 
 ### Added
