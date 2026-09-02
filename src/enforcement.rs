@@ -286,7 +286,7 @@ fn checked_duration(value: f64) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{mpsc, Arc, Barrier};
+    use std::sync::{Arc, Barrier, mpsc};
     use std::thread;
 
     fn grant(id: &str, task: &str, action: &str, seconds: f64) -> ActionLeaseGrant {
@@ -495,13 +495,8 @@ mod tests {
         let newer_ledger = Arc::clone(&ledger);
         let newer = thread::spawn(move || {
             let grant = grant("newer", "task-1", "write", 1.0);
-            let result = newer_ledger.register(
-                Duration::from_secs(2),
-                "task-1",
-                "write",
-                1.0,
-                &grant,
-            );
+            let result =
+                newer_ledger.register(Duration::from_secs(2), "task-1", "write", 1.0, &grant);
             newer_registered_tx.send(()).unwrap();
             result
         });
