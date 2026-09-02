@@ -16,7 +16,7 @@ All notable improvements to Time Strike are recorded here.
 
 ### Added
 
-- Added a reusable Rust `ActionLeaseLedger` for host/harness enforcement. It validates the exact task, normalized action, ETA and request anchor, atomically rejects duplicate registration and concurrent consumption, supersedes stale authority, prevents replay, and clamps execution to the host's monotonic hard deadline. This moves enforcement from a smoke-test reference into a production API without adding an MCP call, network dependency or persistence write.
+- Added a reusable Rust `ActionLeaseLedger` for host/harness enforcement. It validates the exact task, normalized action, ETA and request anchor, atomically rejects duplicate registration, out-of-order responses and concurrent consumption, preserves a monotonic per-task request watermark after use, prevents replay, and clamps execution to the host's monotonic hard deadline. This moves enforcement from a smoke-test reference into a production API without adding an MCP call, network dependency or persistence write.
 
 ## [0.2.1] - 2026-09-01
 

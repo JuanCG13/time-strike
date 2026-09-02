@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.2:** Rust hosts can enforce `tick` action leases with the reusable, thread-safe `ActionLeaseLedger`. Registration and consumption fail closed on rebinding, replay, supersession, races or deadline overrun, replacing a test-only reference with executable host enforcement. See the [changelog](CHANGELOG.md#022---2026-09-02).
+**v0.2.2:** Rust hosts can enforce `tick` action leases with the reusable, thread-safe `ActionLeaseLedger`. Registration and consumption fail closed on rebinding, replay, supersession, out-of-order responses, races or deadline overrun, replacing a test-only reference with executable host enforcement. See the [changelog](CHANGELOG.md#022---2026-09-02).
 
 ## Features
 

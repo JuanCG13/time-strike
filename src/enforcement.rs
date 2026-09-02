@@ -80,6 +80,7 @@ struct LeaseRecord {
 struct LedgerState {
     leases: HashMap<String, LeaseRecord>,
     active_by_task: HashMap<String, String>,
+    latest_request_by_task: HashMap<String, Duration>,
 }
 
 /// Thread-safe, monotonic ledger for one-shot host action authority.
@@ -100,8 +101,8 @@ impl ActionLeaseLedger {
 
     /// Registers a grant against the request that produced it.
     ///
-    /// Duplicate detection, supersession, and insertion occur under one lock,
-    /// so concurrent responses cannot both become authoritative.
+    /// Duplicate detection, request ordering, supersession, and insertion occur
+    /// under one lock, so concurrent responses cannot restore stale authority.
     pub fn register(
         &self,
         request_started: Duration,
@@ -147,6 +148,13 @@ impl ActionLeaseLedger {
         if state.leases.contains_key(&grant.lease_id) {
             return Err(ActionLeaseError::DuplicateLease);
         }
+        if state
+            .latest_request_by_task
+            .get(&grant.task_id)
+            .is_some_and(|latest| request_started <= *latest)
+        {
+            return Err(ActionLeaseError::Superseded);
+        }
         if let Some(previous_id) = state.active_by_task.get(&grant.task_id).cloned()
             && let Some(previous) = state.leases.get_mut(&previous_id)
             && !previous.consumed
@@ -168,6 +176,9 @@ impl ActionLeaseLedger {
         state
             .active_by_task
             .insert(grant.task_id.clone(), grant.lease_id.clone());
+        state
+            .latest_request_by_task
+            .insert(grant.task_id.clone(), request_started);
         Ok(())
     }
 
@@ -188,42 +199,35 @@ impl ActionLeaseLedger {
             .state
             .lock()
             .map_err(|_| ActionLeaseError::Unavailable)?;
-        let registered_task;
+        let lease = state
+            .leases
+            .get_mut(lease_id)
+            .ok_or(ActionLeaseError::UnknownLease)?;
+        if lease.superseded {
+            return Err(ActionLeaseError::Superseded);
+        }
+        if lease.consumed {
+            return Err(ActionLeaseError::AlreadyConsumed);
+        }
+        if lease.task_id != task_id {
+            return Err(ActionLeaseError::BindingMismatch("task_id"));
+        }
+        if lease.action != action {
+            return Err(ActionLeaseError::BindingMismatch("action"));
+        }
+        if lease.duration_seconds.to_bits() != eta_seconds.to_bits() {
+            return Err(ActionLeaseError::BindingMismatch("duration_seconds"));
+        }
+        if now >= lease.expires_at {
+            return Err(ActionLeaseError::Expired);
+        }
+        if now
+            .checked_add(lease.duration)
+            .is_none_or(|finish| finish > lease.expires_at)
         {
-            let lease = state
-                .leases
-                .get_mut(lease_id)
-                .ok_or(ActionLeaseError::UnknownLease)?;
-            if lease.superseded {
-                return Err(ActionLeaseError::Superseded);
-            }
-            if lease.consumed {
-                return Err(ActionLeaseError::AlreadyConsumed);
-            }
-            if lease.task_id != task_id {
-                return Err(ActionLeaseError::BindingMismatch("task_id"));
-            }
-            if lease.action != action {
-                return Err(ActionLeaseError::BindingMismatch("action"));
-            }
-            if lease.duration_seconds.to_bits() != eta_seconds.to_bits() {
-                return Err(ActionLeaseError::BindingMismatch("duration_seconds"));
-            }
-            if now >= lease.expires_at {
-                return Err(ActionLeaseError::Expired);
-            }
-            if now
-                .checked_add(lease.duration)
-                .is_none_or(|finish| finish > lease.expires_at)
-            {
-                return Err(ActionLeaseError::WouldExceedDeadline);
-            }
-            lease.consumed = true;
-            registered_task = lease.task_id.clone();
+            return Err(ActionLeaseError::WouldExceedDeadline);
         }
-        if state.active_by_task.get(&registered_task).map(String::as_str) == Some(lease_id) {
-            state.active_by_task.remove(&registered_task);
-        }
+        lease.consumed = true;
         Ok(())
     }
 }
@@ -282,7 +286,7 @@ fn checked_duration(value: f64) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Barrier};
+    use std::sync::{mpsc, Arc, Barrier};
     use std::thread;
 
     fn grant(id: &str, task: &str, action: &str, seconds: f64) -> ActionLeaseGrant {
@@ -302,10 +306,22 @@ mod tests {
         let ledger = ActionLeaseLedger::new(Duration::from_secs(20));
         let lease = grant("lease-1", "task-1", "write output", 2.0);
         ledger
-            .register(Duration::from_secs(1), "task-1", "write output", 2.0, &lease)
+            .register(
+                Duration::from_secs(1),
+                "task-1",
+                "write output",
+                2.0,
+                &lease,
+            )
             .unwrap();
         ledger
-            .consume("lease-1", "task-1", "write output", 2.0, Duration::from_secs(2))
+            .consume(
+                "lease-1",
+                "task-1",
+                "write output",
+                2.0,
+                Duration::from_secs(2),
+            )
             .unwrap();
         assert_eq!(
             ledger.consume(
@@ -351,7 +367,13 @@ mod tests {
             Err(ActionLeaseError::BindingMismatch("action"))
         );
         ledger
-            .consume("lease-1", "task-1", "write output", 2.0, Duration::from_secs(1))
+            .consume(
+                "lease-1",
+                "task-1",
+                "write output",
+                2.0,
+                Duration::from_secs(1),
+            )
             .unwrap();
     }
 
@@ -392,7 +414,7 @@ mod tests {
             .register(Duration::ZERO, "task-1", "inspect", 1.0, &old)
             .unwrap();
         ledger
-            .register(Duration::ZERO, "task-1", "write", 1.0, &new)
+            .register(Duration::from_secs(1), "task-1", "write", 1.0, &new)
             .unwrap();
         assert_eq!(
             ledger.consume("old", "task-1", "inspect", 1.0, Duration::ZERO),
@@ -404,6 +426,52 @@ mod tests {
     }
 
     #[test]
+    fn out_of_order_response_cannot_restore_stale_authority() {
+        let ledger = ActionLeaseLedger::new(Duration::from_secs(20));
+        let older = grant("older", "task-1", "inspect", 1.0);
+        let newer = grant("newer", "task-1", "write", 1.0);
+        ledger
+            .register(Duration::from_secs(2), "task-1", "write", 1.0, &newer)
+            .unwrap();
+        assert_eq!(
+            ledger.register(Duration::from_secs(1), "task-1", "inspect", 1.0, &older),
+            Err(ActionLeaseError::Superseded)
+        );
+        ledger
+            .consume("newer", "task-1", "write", 1.0, Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            ledger.register(Duration::from_secs(1), "task-1", "inspect", 1.0, &older),
+            Err(ActionLeaseError::Superseded)
+        );
+        assert_eq!(
+            ledger.consume("older", "task-1", "inspect", 1.0, Duration::from_secs(2)),
+            Err(ActionLeaseError::UnknownLease)
+        );
+    }
+
+    #[test]
+    fn equal_request_anchor_keeps_first_authority() {
+        let ledger = ActionLeaseLedger::new(Duration::from_secs(20));
+        let first = grant("first", "task-1", "inspect", 1.0);
+        let second = grant("second", "task-1", "write", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "inspect", 1.0, &first)
+            .unwrap();
+        assert_eq!(
+            ledger.register(Duration::ZERO, "task-1", "write", 1.0, &second),
+            Err(ActionLeaseError::Superseded)
+        );
+        ledger
+            .consume("first", "task-1", "inspect", 1.0, Duration::ZERO)
+            .unwrap();
+        assert_eq!(
+            ledger.consume("second", "task-1", "write", 1.0, Duration::ZERO),
+            Err(ActionLeaseError::UnknownLease)
+        );
+    }
+
+    #[test]
     fn hard_deadline_clamps_relative_expiry() {
         let ledger = ActionLeaseLedger::new(Duration::from_secs(4));
         let lease = grant("lease-1", "task-1", "write", 2.0);
@@ -411,24 +479,49 @@ mod tests {
             .register(Duration::ZERO, "task-1", "write", 2.0, &lease)
             .unwrap();
         assert_eq!(
-            ledger.consume(
-                "lease-1",
-                "task-1",
-                "write",
-                2.0,
-                Duration::from_secs(3)
-            ),
+            ledger.consume("lease-1", "task-1", "write", 2.0, Duration::from_secs(3)),
             Err(ActionLeaseError::WouldExceedDeadline)
         );
         ledger
-            .consume(
-                "lease-1",
+            .consume("lease-1", "task-1", "write", 2.0, Duration::from_secs(2))
+            .unwrap();
+    }
+
+    #[test]
+    fn concurrent_inverted_arrival_obeys_request_order() {
+        let ledger = Arc::new(ActionLeaseLedger::new(Duration::from_secs(20)));
+        let (newer_registered_tx, newer_registered_rx) = mpsc::channel();
+
+        let newer_ledger = Arc::clone(&ledger);
+        let newer = thread::spawn(move || {
+            let grant = grant("newer", "task-1", "write", 1.0);
+            let result = newer_ledger.register(
+                Duration::from_secs(2),
                 "task-1",
                 "write",
-                2.0,
-                Duration::from_secs(2),
-            )
+                1.0,
+                &grant,
+            );
+            newer_registered_tx.send(()).unwrap();
+            result
+        });
+
+        let older_ledger = Arc::clone(&ledger);
+        let older = thread::spawn(move || {
+            newer_registered_rx.recv().unwrap();
+            let grant = grant("older", "task-1", "inspect", 1.0);
+            older_ledger.register(Duration::from_secs(1), "task-1", "inspect", 1.0, &grant)
+        });
+
+        assert_eq!(newer.join().unwrap(), Ok(()));
+        assert_eq!(older.join().unwrap(), Err(ActionLeaseError::Superseded));
+        ledger
+            .consume("newer", "task-1", "write", 1.0, Duration::from_secs(2))
             .unwrap();
+        assert_eq!(
+            ledger.consume("older", "task-1", "inspect", 1.0, Duration::from_secs(2)),
+            Err(ActionLeaseError::UnknownLease)
+        );
     }
 
     #[test]
