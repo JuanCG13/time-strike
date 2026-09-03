@@ -49,6 +49,8 @@ request. On the response, verify that `task_id`, normalized `action` and
 `tick_request_started`, and that `one_shot` is true. Store the lease only in an
 ephemeral ledger for the current MCP connection. Under the same ledger lock, reject a
 `lease_id` that was already seen without changing its record or the task's active lease;
+require each accepted request start to be strictly newer than the task's monotonic
+connection-local watermark (equal anchors fail closed), retaining that watermark after use;
 duplicate delivery, retry and concurrent registration must fail closed. Then atomically
 supersede the prior lease for that task and set its expiration to the earlier of request-start plus
 `expires_in_seconds` and the host's hard deadline. Consumption must compare the
@@ -56,6 +58,14 @@ execution task inside the same atomic operation and reject unknown or invented i
 a different task, action or ETA, replay, duplicate registration, concurrent use,
 superseded leases and any action whose full ETA no longer fits. Never parse or trust a
 `task:tick` id without the matching ledger record, and never restart expiry at use.
+
+Rust hosts can apply this contract directly with
+`time_strike::enforcement::{ActionLeaseGrant, ActionLeaseLedger}`. Construct one
+ledger per MCP connection using the host's absolute monotonic deadline, call
+`register` with the recorded request-start instant and exact proposal, then call
+`consume` immediately before dispatching external work. A reconnect must create a
+fresh ledger. Other host languages must preserve the same atomicity and fail-closed
+semantics, including rejection of delayed responses from older requests.
 
 ## Subagents
 

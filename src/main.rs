@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time_strike::clock::{Clock, MonotonicClock};
+use time_strike::enforcement::ActionLeaseGrant;
 use time_strike::policy::{PolicyDecision, PolicyInput, ScheduleStatus, evaluate_time_policy};
 use time_strike::{
     AdjustTaskRequest, CheckpointRequest, FileStore, FinishTaskRequest, StartTaskRequest,
@@ -174,20 +175,9 @@ struct TickOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     action_fits: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    action_lease: Option<ActionLeaseOutput>,
+    action_lease: Option<ActionLeaseGrant>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
-}
-
-#[derive(Debug, Serialize, JsonSchema, PartialEq)]
-struct ActionLeaseOutput {
-    lease_id: String,
-    task_id: String,
-    action: String,
-    duration_seconds: f64,
-    expires_in_seconds: f64,
-    expiry_anchor: String,
-    one_shot: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -657,7 +647,7 @@ impl TimeStrikeServer {
 
 #[tool_handler(
     name = "time-strike",
-    version = "0.2.1",
+    version = "0.2.2",
     instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint before costly work with plan_complete=true and 2-8 plan_steps; each needs action, estimated_seconds, and done_when. Before costly work call tick with current_action and current_action_estimated_seconds, then proceed only with the returned action_lease and its relative expiry. Call tick after searches, edits, tests, delegation, and tool calls. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
 )]
 impl ServerHandler for TimeStrikeServer {}
@@ -699,12 +689,12 @@ fn issue_action_lease(
     action: Option<&str>,
     estimated_seconds: Option<f64>,
     lease_ceiling_seconds: f64,
-) -> Option<ActionLeaseOutput> {
+) -> Option<ActionLeaseGrant> {
     let action = action?.trim();
     let duration_seconds = estimated_seconds?;
     // Never serialize a rounded expiry that is later than the policy ceiling.
     let expires_in_seconds = (lease_ceiling_seconds.max(0.0) * 1000.0).floor() / 1000.0;
-    (duration_seconds <= expires_in_seconds).then(|| ActionLeaseOutput {
+    (duration_seconds <= expires_in_seconds).then(|| ActionLeaseGrant {
         lease_id: format!("{task_id}:{tick}"),
         task_id: task_id.to_owned(),
         action: action.to_owned(),

@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.1:** `tick` can issue a bounded one-shot action lease with no additional MCP call. The host binds it to the task, action, ETA and monotonic expiry, and duplicate registration fails closed so retries or concurrent delivery cannot restore consumed authority. See the [changelog](CHANGELOG.md#021---2026-09-01).
+**v0.2.2:** Rust hosts can enforce `tick` action leases with the reusable, thread-safe `ActionLeaseLedger`. Registration and consumption fail closed on rebinding, replay, supersession, out-of-order responses, races or deadline overrun, replacing a test-only reference with executable host enforcement. See the [changelog](CHANGELOG.md#022---2026-09-02).
 
 ## Features
 
@@ -16,6 +16,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 - Automatic modes: `explore`, `execute`, `converge`, `validate`, `finalize`, `emergency`, and `expired`.
 - Automatic schedule pressure: `ahead`, `on_track`, `behind`, and `critical`.
 - Action caps, next-check intervals, and `must_*` control flags.
+- Reusable host-side enforcement for one-shot action leases.
 - Parent/child budget clamping with thread-safe task state.
 - Optional atomic JSON persistence; downtime is charged during recovery.
 - Compatible with Claude Desktop, Claude Code, Codex, Hermes Agent, and generic MCP stdio clients.
@@ -53,6 +54,9 @@ MCP stdio (rmcp)
   -> pure evaluate_time_policy() function
   -> monotonic Clock (Instant)
   -> optional SnapshotStore (atomic JSON)
+
+Host/harness
+  -> ActionLeaseLedger (atomic admission enforcement)
 ```
 
 The core has no async or MCP-specific state. Production uses `MonotonicClock`; tests use `ManualClock`. Persistence uses wall-clock timestamps only to charge process downtime after recovery. See [`docs/architecture.md`](docs/architecture.md) and [`docs/protocol.md`](docs/protocol.md).
