@@ -6,7 +6,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -81,6 +81,7 @@ struct LedgerState {
     leases: HashMap<String, LeaseRecord>,
     active_by_task: HashMap<String, String>,
     latest_request_by_task: HashMap<String, Duration>,
+    revoked_tasks: HashSet<String>,
 }
 
 /// Thread-safe, monotonic ledger for one-shot host action authority.
@@ -145,6 +146,9 @@ impl ActionLeaseLedger {
             .state
             .lock()
             .map_err(|_| ActionLeaseError::Unavailable)?;
+        if state.revoked_tasks.contains(&grant.task_id) {
+            return Err(ActionLeaseError::Superseded);
+        }
         if state.leases.contains_key(&grant.lease_id) {
             return Err(ActionLeaseError::DuplicateLease);
         }
@@ -179,6 +183,28 @@ impl ActionLeaseLedger {
         state
             .latest_request_by_task
             .insert(grant.task_id.clone(), request_started);
+        Ok(())
+    }
+
+    /// Permanently revokes action authority for one task on this connection.
+    ///
+    /// Revocation is idempotent and shares the ledger lock with registration
+    /// and consumption. Once it linearizes, an outstanding lease cannot be
+    /// consumed and delayed or future responses cannot register new authority.
+    pub fn revoke_task(&self, task_id: &str) -> Result<(), ActionLeaseError> {
+        if !valid_task_id(task_id) {
+            return Err(ActionLeaseError::BindingMismatch("task_id"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| ActionLeaseError::Unavailable)?;
+        state.revoked_tasks.insert(task_id.to_owned());
+        if let Some(lease_id) = state.active_by_task.remove(task_id)
+            && let Some(lease) = state.leases.get_mut(&lease_id)
+        {
+            lease.superseded = true;
+        }
         Ok(())
     }
 
@@ -577,6 +603,83 @@ mod tests {
                 .filter(|result| **result == Err(ActionLeaseError::AlreadyConsumed))
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn revocation_blocks_active_and_delayed_authority_without_cross_task_impact() {
+        let ledger = ActionLeaseLedger::new(Duration::from_secs(20));
+        let revoked = grant("revoked", "task-1", "write", 1.0);
+        let other = grant("other", "task-2", "inspect", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "write", 1.0, &revoked)
+            .unwrap();
+        ledger
+            .register(Duration::ZERO, "task-2", "inspect", 1.0, &other)
+            .unwrap();
+
+        ledger.revoke_task("task-1").unwrap();
+        ledger.revoke_task("task-1").unwrap();
+
+        assert_eq!(
+            ledger.consume("revoked", "task-1", "write", 1.0, Duration::ZERO),
+            Err(ActionLeaseError::Superseded)
+        );
+        let delayed = grant("delayed", "task-1", "validate", 1.0);
+        assert_eq!(
+            ledger.register(
+                Duration::from_secs(2),
+                "task-1",
+                "validate",
+                1.0,
+                &delayed
+            ),
+            Err(ActionLeaseError::Superseded)
+        );
+        ledger
+            .consume("other", "task-2", "inspect", 1.0, Duration::ZERO)
+            .unwrap();
+    }
+
+    #[test]
+    fn revocation_and_consumption_have_a_single_linearization_order() {
+        let ledger = Arc::new(ActionLeaseLedger::new(Duration::from_secs(20)));
+        let lease = grant("lease-1", "task-1", "write", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "write", 1.0, &lease)
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let consuming_ledger = Arc::clone(&ledger);
+        let consuming_barrier = Arc::clone(&barrier);
+        let consume = thread::spawn(move || {
+            consuming_barrier.wait();
+            consuming_ledger.consume("lease-1", "task-1", "write", 1.0, Duration::ZERO)
+        });
+        let revoking_ledger = Arc::clone(&ledger);
+        let revoking_barrier = Arc::clone(&barrier);
+        let revoke = thread::spawn(move || {
+            revoking_barrier.wait();
+            revoking_ledger.revoke_task("task-1")
+        });
+        barrier.wait();
+
+        let consume_result = consume.join().unwrap();
+        assert!(matches!(
+            consume_result,
+            Ok(()) | Err(ActionLeaseError::Superseded)
+        ));
+        assert_eq!(revoke.join().unwrap(), Ok(()));
+        let later = grant("later", "task-1", "write", 1.0);
+        assert_eq!(
+            ledger.register(
+                Duration::from_secs(1),
+                "task-1",
+                "write",
+                1.0,
+                &later
+            ),
+            Err(ActionLeaseError::Superseded)
         );
     }
 }

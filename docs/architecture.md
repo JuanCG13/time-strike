@@ -50,6 +50,13 @@ authority, supersession and one-shot consumption. It stores only connection-loca
 ephemeral records; hosts still own dispatch, cancellation, privilege checks and
 the absolute deadline.
 
+For task cancellation, `revoke_task` is the connection-local authority barrier.
+It is idempotent and linearized by the same mutex as registration and consumption.
+After revocation wins the lock, the task's pending lease is unusable and no delayed
+or future response can register replacement authority; unrelated tasks remain
+available. If consumption wins first, dispatch has already been admitted and the
+host remains responsible for interrupting that running operation.
+
 ## Persistence
 
 `FileStore` holds an exclusive advisory lock for its lifetime, fails closed for a second writer, writes unique `0600` temporary files, flushes, atomically renames and syncs the parent directory where supported. A failed save rolls the in-memory mutation back. Writes occur on lifecycle operations, not through a polling watchdog. Snapshot v2 stores elapsed state and wall-clock save time.
