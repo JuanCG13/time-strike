@@ -34,10 +34,7 @@ fn action_lease_register_consume_10k(c: &mut Criterion) {
                         one_shot: true,
                     })
                     .collect::<Vec<_>>();
-                (
-                    ActionLeaseLedger::new(Duration::from_secs(100)),
-                    grants,
-                )
+                (ActionLeaseLedger::new(Duration::from_secs(100)), grants)
             },
             |(ledger, grants)| {
                 for (index, grant) in grants.iter().enumerate() {
