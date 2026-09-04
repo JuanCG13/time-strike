@@ -67,6 +67,14 @@ ledger per MCP connection using the host's absolute monotonic deadline, call
 fresh ledger. Other host languages must preserve the same atomicity and fail-closed
 semantics, including rejection of delayed responses from older requests.
 
+When a task is cancelled, stopped or otherwise loses dispatch authority, the
+Rust host must call `revoke_task(task_id)` before acknowledging that transition.
+Revocation is idempotent and uses the same lock as registration and consumption:
+once it wins the lock, an outstanding lease cannot start and a delayed or future
+response for that task cannot restore authority. A consumption that linearizes
+first has already admitted the action and must be cancelled by the host's normal
+execution mechanism. Revocation does not affect other tasks sharing the ledger.
+
 ## Subagents
 
 Call `tick` before delegation. Start each child with `parent_task_id`; Time Strike clamps the child request to parent availability. Preserve parent time for integration, validation, and finalization. Concurrent agents must share one long-lived MCP server process to share task state.
