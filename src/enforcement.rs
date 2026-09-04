@@ -627,13 +627,7 @@ mod tests {
         );
         let delayed = grant("delayed", "task-1", "validate", 1.0);
         assert_eq!(
-            ledger.register(
-                Duration::from_secs(2),
-                "task-1",
-                "validate",
-                1.0,
-                &delayed
-            ),
+            ledger.register(Duration::from_secs(2), "task-1", "validate", 1.0, &delayed),
             Err(ActionLeaseError::Superseded)
         );
         ledger
@@ -672,13 +666,7 @@ mod tests {
         assert_eq!(revoke.join().unwrap(), Ok(()));
         let later = grant("later", "task-1", "write", 1.0);
         assert_eq!(
-            ledger.register(
-                Duration::from_secs(1),
-                "task-1",
-                "write",
-                1.0,
-                &later
-            ),
+            ledger.register(Duration::from_secs(1), "task-1", "write", 1.0, &later),
             Err(ActionLeaseError::Superseded)
         );
     }
