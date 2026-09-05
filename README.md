@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.3:** Rust hosts can atomically revoke all action-lease authority for one task. Revocation is idempotent, blocks pending leases and prevents delayed responses from restoring authority without disrupting other tasks on the same connection. See the [changelog](CHANGELOG.md#023---2026-09-04).
+**v0.2.4:** `cargo bench` now measures 10,000 complete action-lease registration-and-consumption cycles alongside the core tick benchmark, making host enforcement overhead reproducible without changing runtime behavior. See the [changelog](CHANGELOG.md#024---2026-09-04).
 
 ## Features
 
