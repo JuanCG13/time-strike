@@ -61,6 +61,8 @@ host remains responsible for interrupting that running operation.
 
 `FileStore` holds an exclusive advisory lock for its lifetime, fails closed for a second writer, writes unique `0600` temporary files, flushes, atomically renames and syncs the parent directory where supported. A failed save rolls the in-memory mutation back. Writes occur on lifecycle operations, not through a polling watchdog. Snapshot v2 stores elapsed state and wall-clock save time.
 
+Recovery rebuilds parent reservations only for active children. Later cleanup of an already exhausted child subtracts budget only if that child still owns an entry in the parent's active reservation set, so it cannot release a sibling's capacity.
+
 ## Concurrency and idle behavior
 
 State uses short `RwLock` critical sections. No busy loop or polling thread exists; idle CPU is effectively zero. Deadlines are evaluated lazily on calls and during recovery.

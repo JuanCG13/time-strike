@@ -217,6 +217,45 @@ fn process_restart_charges_wall_clock_downtime() {
     assert!(recovered.remaining_secs <= 7.0);
 }
 
+#[test]
+fn finishing_recovered_exhausted_child_preserves_active_sibling_reservation() {
+    let store = Arc::new(MemoryStore::new());
+    let manager = TaskManager::with_store(ManualClock::new(), store.clone()).unwrap();
+    manager
+        .start_task(StartTaskRequest::new("parent", 100.0))
+        .unwrap();
+    manager
+        .start_task(StartTaskRequest::new("exhausted", 5.0).with_parent("parent"))
+        .unwrap();
+    manager
+        .start_task(StartTaskRequest::new("active", 10.0).with_parent("parent"))
+        .unwrap();
+
+    let mut snapshot = store.state().unwrap();
+    snapshot
+        .tasks
+        .iter_mut()
+        .find(|task| task.task_id == "exhausted")
+        .unwrap()
+        .elapsed_secs = 5.0;
+    store.save(&snapshot).unwrap();
+
+    let recovered = TaskManager::with_store(ManualClock::new(), store).unwrap();
+    assert_eq!(
+        recovered.get_task("exhausted").unwrap().status,
+        TaskStatus::Exhausted
+    );
+    assert!((recovered.get_task("parent").unwrap().child_reserved_secs - 10.0).abs() < 1e-9);
+
+    recovered
+        .finish_task(FinishTaskRequest::new("exhausted"))
+        .unwrap();
+
+    let parent = recovered.get_task("parent").unwrap();
+    assert!((parent.child_reserved_secs - 10.0).abs() < 1e-9);
+    assert_eq!(parent.children, vec!["active"]);
+}
+
 struct FailingStore;
 
 impl SnapshotStore for FailingStore {

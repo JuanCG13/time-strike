@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.4:** `cargo bench` now measures 10,000 complete action-lease registration-and-consumption cycles alongside the core tick benchmark, making host enforcement overhead reproducible without changing runtime behavior. See the [changelog](CHANGELOG.md#024---2026-09-04).
+**v0.2.5:** recovery cleanup now preserves active sibling budget reservations when an already exhausted child is finished, preventing stale parent links from manufacturing extra capacity. See the [changelog](CHANGELOG.md#025---2026-09-06).
 
 ## Features
 

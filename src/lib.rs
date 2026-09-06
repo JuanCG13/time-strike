@@ -1149,8 +1149,8 @@ impl TaskManager {
         };
         if let Some(parent_id) = parent_id.as_deref()
             && let Some(parent) = tasks.get_mut(parent_id)
+            && parent.children.remove(&request.task_id)
         {
-            parent.children.remove(&request.task_id);
             parent.child_reserved_secs = (parent.child_reserved_secs - budget).max(0.0);
         }
         self.persist_or_rollback(&mut tasks, before, now)?;
