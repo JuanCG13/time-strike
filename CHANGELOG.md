@@ -12,6 +12,12 @@ All notable improvements to Time Strike are recorded here.
 - 2026-08-29: hosts can set `TIME_STRIKE_DEADLINE_UNIX_MS` before launching the MCP server; the wall deadline is converted once to an immutable monotonic limit that is enforced under the task lock during both creation and adjustment, rejects starts delayed past the limit, prevents authorized budget increases from bypassing it, and reports the active deadline authority.
 - 2026-08-28: `tick` now reports actual elapsed time, budget-accounted elapsed time, overrun, and deadline compliance separately; actual elapsed time also survives persistence without changing the existing `TaskView` layout or its live/finish elapsed semantics, and legacy v2 snapshots remain recoverable.
 
+## [0.2.6] - 2026-09-07
+
+### Fixed
+
+- Parent budget reductions now fail atomically when the new total cannot cover monotonic elapsed time plus active child reservations. This prevents an adjustment from revoking delegated authority or letting a child outlive its parent's contracted budget; contraction remains available after the child finishes.
+
 ## [0.2.5] - 2026-09-06
 
 ### Fixed
