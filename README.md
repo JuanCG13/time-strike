@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.5:** recovery cleanup now preserves active sibling budget reservations when an already exhausted child is finished, preventing stale parent links from manufacturing extra capacity. See the [changelog](CHANGELOG.md#025---2026-09-06).
+**v0.2.6:** parent budget reductions now fail atomically when they would revoke active child reservations, preserving delegated deadline authority until each child finishes. See the [changelog](CHANGELOG.md#026---2026-09-07).
 
 ## Features
 
