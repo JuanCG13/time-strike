@@ -1004,6 +1004,7 @@ impl TaskManager {
         let current_runtime;
         let old_budget;
         let parent_id;
+        let child_reserved_secs;
         {
             let task = tasks
                 .get(&request.task_id)
@@ -1014,6 +1015,7 @@ impl TaskManager {
             current_runtime = task.runtime_secs(now);
             old_budget = task.budget_secs;
             parent_id = task.parent_id.clone();
+            child_reserved_secs = task.child_reserved_secs;
         }
         let requested_budget = request.budget_secs;
         let mut effective_budget = old_budget;
@@ -1061,6 +1063,11 @@ impl TaskManager {
                 }
             }
             clamped = effective_budget + EPSILON < requested;
+        }
+        if requested_budget.is_some()
+            && effective_budget + EPSILON < current_runtime + child_reserved_secs
+        {
+            return Err(TaskError::ActiveChildren(request.task_id));
         }
         if let Some(parent_id) = parent_id.as_deref() {
             let parent = tasks

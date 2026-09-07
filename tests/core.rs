@@ -131,6 +131,34 @@ fn successive_children_cannot_erode_parent_reserve() {
 }
 
 #[test]
+fn parent_adjustment_cannot_revoke_active_child_reservation() {
+    let (clock, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("adjust-root", 100.0))
+        .unwrap();
+    manager
+        .start_task(StartTaskRequest::new("adjust-child", 40.0).with_parent("adjust-root"))
+        .unwrap();
+    clock.advance_secs(10.0);
+
+    assert_eq!(
+        manager.adjust_task(AdjustTaskRequest::new("adjust-root").with_budget(20.0)),
+        Err(TaskError::ActiveChildren("adjust-root".into()))
+    );
+    let unchanged = manager.get_task("adjust-root").unwrap();
+    assert!((unchanged.budget_secs - 100.0).abs() < 1e-9);
+    assert!((unchanged.child_reserved_secs - 40.0).abs() < 1e-9);
+
+    manager
+        .finish_task(FinishTaskRequest::new("adjust-child"))
+        .unwrap();
+    let adjusted = manager
+        .adjust_task(AdjustTaskRequest::new("adjust-root").with_budget(20.0))
+        .unwrap();
+    assert!((adjusted.task.budget_secs - 20.0).abs() < 1e-9);
+}
+
+#[test]
 fn trusted_core_caller_can_force_finish_parent() {
     let (_, manager) = manager();
     manager
