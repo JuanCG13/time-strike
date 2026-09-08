@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.7:** recovery now fails closed when a snapshot's save timestamp is later than the current wall clock, preventing rollback from erasing downtime and extending active task authority. See the [changelog](CHANGELOG.md#027---2026-09-08).
+**v0.2.8:** server startup now restores implicit task selection when recovery finds exactly one unfinished task, so normal calls can resume after restart without guessing when state is ambiguous. See the [changelog](CHANGELOG.md#028---2026-09-08).
 
 ## Features
 
