@@ -16,7 +16,7 @@ use time_strike::enforcement::ActionLeaseGrant;
 use time_strike::policy::{PolicyDecision, PolicyInput, ScheduleStatus, evaluate_time_policy};
 use time_strike::{
     AdjustTaskRequest, CheckpointRequest, FileStore, FinishTaskRequest, StartTaskRequest,
-    TaskManager, TaskTiming, TaskView, TickRequest,
+    TaskManager, TaskStatus, TaskTiming, TaskView, TickRequest,
 };
 
 const MIN_PLAN_STEPS: usize = 2;
@@ -249,9 +249,10 @@ impl TimeStrikeServer {
         } else {
             TaskManager::new(clock)
         };
+        let recovered_active_task = sole_unfinished_task_id(&manager);
         Ok(Self {
             manager: Arc::new(manager),
-            active_task: Arc::new(RwLock::new(None)),
+            active_task: Arc::new(RwLock::new(recovered_active_task)),
             ids: Arc::new(AtomicU64::new(1)),
             default_validation_percent: config.defaults.validation_reserve_percent,
             default_finalization_percent: config.defaults.finalization_reserve_percent,
@@ -384,6 +385,16 @@ impl TimeStrikeServer {
             reason: verbose.then(|| decision.reason.to_string()),
         }
     }
+}
+
+fn sole_unfinished_task_id(manager: &TaskManager) -> Option<String> {
+    let mut unfinished = manager
+        .list_tasks()
+        .into_iter()
+        .filter(|task| !matches!(task.status, TaskStatus::Finished))
+        .map(|task| task.task_id);
+    let task_id = unfinished.next()?;
+    unfinished.next().is_none().then_some(task_id)
 }
 
 #[tool_router(router = tool_router)]
@@ -647,7 +658,7 @@ impl TimeStrikeServer {
 
 #[tool_handler(
     name = "time-strike",
-    version = "0.2.7",
+    version = "0.2.8",
     instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint before costly work with plan_complete=true and 2-8 plan_steps; each needs action, estimated_seconds, and done_when. Before costly work call tick with current_action and current_action_estimated_seconds, then proceed only with the returned action_lease and its relative expiry. Call tick after searches, edits, tests, delegation, and tool calls. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
 )]
 impl ServerHandler for TimeStrikeServer {}
@@ -859,6 +870,36 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_selection_recovers_only_an_unambiguous_unfinished_task() {
+        use time_strike::{ManualClock, MemoryStore};
+
+        let store = Arc::new(MemoryStore::new());
+        let original = TaskManager::with_store(ManualClock::new(), store.clone()).unwrap();
+        original
+            .start_task(StartTaskRequest::new("recovered", 300.0))
+            .unwrap();
+
+        let recovered = TaskManager::with_store(ManualClock::new(), store).unwrap();
+        assert_eq!(
+            sole_unfinished_task_id(&recovered).as_deref(),
+            Some("recovered")
+        );
+
+        recovered
+            .start_task(StartTaskRequest::new("second", 300.0))
+            .unwrap();
+        assert_eq!(sole_unfinished_task_id(&recovered), None);
+
+        recovered
+            .finish_task(FinishTaskRequest::new("second"))
+            .unwrap();
+        assert_eq!(
+            sole_unfinished_task_id(&recovered).as_deref(),
+            Some("recovered")
+        );
+    }
 
     #[test]
     fn wall_deadline_is_converted_once_to_a_monotonic_instant() {
