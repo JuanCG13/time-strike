@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.6:** parent budget reductions now fail atomically when they would revoke active child reservations, preserving delegated deadline authority until each child finishes. See the [changelog](CHANGELOG.md#026---2026-09-07).
+**v0.2.7:** recovery now fails closed when a snapshot's save timestamp is later than the current wall clock, preventing rollback from erasing downtime and extending active task authority. See the [changelog](CHANGELOG.md#027---2026-09-08).
 
 ## Features
 
