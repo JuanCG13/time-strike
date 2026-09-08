@@ -246,6 +246,26 @@ fn process_restart_charges_wall_clock_downtime() {
 }
 
 #[test]
+fn recovery_rejects_wall_clock_rollback() {
+    let store = Arc::new(MemoryStore::new());
+    let manager = TaskManager::with_store(ManualClock::new(), store.clone()).unwrap();
+    manager
+        .start_task(StartTaskRequest::new("clock-rollback", 30.0))
+        .unwrap();
+
+    let mut snapshot = store.state().unwrap();
+    snapshot.saved_at_unix_ms = u64::MAX;
+    store.save(&snapshot).unwrap();
+
+    let recovered = TaskManager::with_store(ManualClock::new(), store);
+    assert!(matches!(
+        recovered,
+        Err(TaskError::CorruptSnapshot(message))
+            if message == "saved_at_unix_ms cannot be later than recovery wall time"
+    ));
+}
+
+#[test]
 fn finishing_recovered_exhausted_child_preserves_active_sibling_reservation() {
     let store = Arc::new(MemoryStore::new());
     let manager = TaskManager::with_store(ManualClock::new(), store.clone()).unwrap();
