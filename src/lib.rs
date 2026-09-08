@@ -1325,7 +1325,15 @@ impl TaskManager {
             )));
         }
         let now = self.clock.now();
-        let downtime_secs = unix_ms().saturating_sub(snapshot.saved_at_unix_ms) as f64 / 1000.0;
+        let recovered_at_unix_ms = unix_ms();
+        let downtime_ms = recovered_at_unix_ms
+            .checked_sub(snapshot.saved_at_unix_ms)
+            .ok_or_else(|| {
+                TaskError::CorruptSnapshot(
+                    "saved_at_unix_ms cannot be later than recovery wall time".into(),
+                )
+            })?;
+        let downtime_secs = downtime_ms as f64 / 1000.0;
         let mut restored = HashMap::new();
         for persisted in snapshot.tasks {
             validate_id(&persisted.task_id)
