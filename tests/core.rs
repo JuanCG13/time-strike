@@ -654,7 +654,10 @@ fn replacement_plan_requires_explicit_replan_and_rejection_is_atomic() {
     replacement.replan = true;
     let accepted = manager.checkpoint(replacement).unwrap();
     assert_eq!(accepted.task.checkpoints, before.checkpoints + 1);
-    assert_eq!(accepted.checkpoint.estimated_remaining_work_secs, Some(15.0));
+    assert_eq!(
+        accepted.checkpoint.estimated_remaining_work_secs,
+        Some(15.0)
+    );
 }
 
 #[test]
