@@ -629,6 +629,35 @@ fn progress_regression_requires_replan() {
 }
 
 #[test]
+fn replacement_plan_requires_explicit_replan_and_rejection_is_atomic() {
+    let (_, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("explicit-replan", 30.0))
+        .unwrap();
+    manager
+        .checkpoint(plan("explicit-replan", 0.0, 20.0))
+        .unwrap();
+    let before = manager.get_task("explicit-replan").unwrap();
+
+    let mut replacement = plan("explicit-replan", 0.1, 15.0);
+    assert!(matches!(
+        manager.checkpoint(replacement.clone()),
+        Err(TaskError::Invalid(message))
+            if message == "replacement plan requires replan=true"
+    ));
+
+    let rejected = manager.get_task("explicit-replan").unwrap();
+    assert_eq!(rejected.checkpoints, before.checkpoints);
+    assert_eq!(rejected.last_checkpoint, before.last_checkpoint);
+    assert!(rejected.plan_submitted);
+
+    replacement.replan = true;
+    let accepted = manager.checkpoint(replacement).unwrap();
+    assert_eq!(accepted.task.checkpoints, before.checkpoints + 1);
+    assert_eq!(accepted.checkpoint.estimated_remaining_work_secs, Some(15.0));
+}
+
+#[test]
 fn finish_reports_real_overrun() {
     let (clock, manager) = manager();
     manager

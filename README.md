@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.9:** initial and replacement plans are now rejected atomically when their ETA exceeds the task's monotonic remaining budget, preventing execution from starting with a plan that cannot fit the deadline. See the [changelog](CHANGELOG.md#029---2026-09-09).
+**v0.2.10:** replacement plans now require `replan=true`, preventing an ordinary checkpoint from silently overwriting the active plan while preserving intentional replanning. See the [changelog](CHANGELOG.md#0210---2026-09-09).
 
 ## Features
 

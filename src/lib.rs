@@ -919,6 +919,11 @@ impl TaskManager {
                     "first checkpoint must submit a compact execution plan".into(),
                 ));
             }
+            if task.plan_submitted && request.plan_complete && !request.replan {
+                return Err(TaskError::Invalid(
+                    "replacement plan requires replan=true".into(),
+                ));
+            }
             if request.plan_complete {
                 let note_is_valid = request
                     .note
