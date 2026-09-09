@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.8:** server startup now restores implicit task selection when recovery finds exactly one unfinished task, so normal calls can resume after restart without guessing when state is ambiguous. See the [changelog](CHANGELOG.md#028---2026-09-08).
+**v0.2.9:** initial and replacement plans are now rejected atomically when their ETA exceeds the task's monotonic remaining budget, preventing execution from starting with a plan that cannot fit the deadline. See the [changelog](CHANGELOG.md#029---2026-09-09).
 
 ## Features
 

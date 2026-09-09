@@ -939,6 +939,16 @@ impl TaskManager {
                     ));
                 }
             }
+            if request.plan_complete
+                && let Some(eta) = request.estimated_remaining_work_secs
+            {
+                let remaining = (task.budget_secs - task.runtime_secs(now)).max(0.0);
+                if eta > remaining + EPSILON {
+                    return Err(TaskError::Invalid(
+                        "plan ETA cannot exceed remaining task budget".into(),
+                    ));
+                }
+            }
             if let Some(new_progress) = request.progress
                 && let Some(previous_progress) = task
                     .last_checkpoint

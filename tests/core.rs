@@ -776,3 +776,36 @@ fn tick_does_not_write_snapshot() {
     manager.checkpoint(plan("ticks", 0.0, 20.0)).unwrap();
     assert_eq!(store.saves.load(Ordering::SeqCst), 2);
 }
+
+#[test]
+fn plan_eta_must_fit_remaining_budget_and_rejection_is_atomic() {
+    let (clock, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("plan-fit", 10.0))
+        .unwrap();
+    clock.advance_secs(2.0);
+
+    let mut plan = CheckpointRequest {
+        task_id: "plan-fit".into(),
+        note: Some("Inspect the path; implement the fix; verify the result".into()),
+        progress: Some(0.0),
+        estimated_remaining_work_secs: Some(8.000_000_002),
+        plan_complete: true,
+        replan: false,
+    };
+    assert!(matches!(
+        manager.checkpoint(plan.clone()),
+        Err(TaskError::Invalid(message))
+            if message == "plan ETA cannot exceed remaining task budget"
+    ));
+
+    let unchanged = manager.get_task("plan-fit").unwrap();
+    assert_eq!(unchanged.checkpoints, 0);
+    assert!(!unchanged.plan_submitted);
+    assert!(unchanged.last_checkpoint.is_none());
+
+    plan.estimated_remaining_work_secs = Some(8.0);
+    let accepted = manager.checkpoint(plan).unwrap();
+    assert_eq!(accepted.task.checkpoints, 1);
+    assert!(accepted.task.plan_submitted);
+}
