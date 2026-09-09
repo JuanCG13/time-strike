@@ -307,8 +307,10 @@ def smoke_future_deadline_and_adjustments():
         rejected = client.call(4, "checkpoint", {
             "task_id": "host-task", "plan_complete": True,
             "plan_steps": [
-                {"action": "Do everything", "estimated_seconds": 45,
-                 "done_when": "everything is done"},
+                {"action": "Inspect impossible scope", "estimated_seconds": 20,
+                 "done_when": "the oversized scope is identified"},
+                {"action": "Attempt oversized work", "estimated_seconds": 25,
+                 "done_when": "all oversized work is complete"},
             ],
             "progress_percent": 0,
         })
@@ -319,11 +321,11 @@ def smoke_future_deadline_and_adjustments():
         planned = client.call(6, "checkpoint", {
             "task_id": "host-task", "plan_complete": True,
             "plan_steps": [
-                {"action": "Inspect protocol", "estimated_seconds": 5,
+                {"action": "Inspect protocol", "estimated_seconds": 3,
                  "done_when": "the affected invariant is identified"},
-                {"action": "Apply the minimal change", "estimated_seconds": 15,
+                {"action": "Apply the minimal change", "estimated_seconds": 5,
                  "done_when": "the regression is fixed"},
-                {"action": "Run targeted smoke", "estimated_seconds": 25,
+                {"action": "Run targeted smoke", "estimated_seconds": 7,
                  "done_when": "all required checks pass"},
             ],
             "progress_percent": 0,
