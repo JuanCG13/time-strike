@@ -18,7 +18,7 @@ Returns current elapsed/remaining, mode, schedule, reserves, usable work, `max_n
 
 ### checkpoint
 
-Stores bounded progress and a compact note (or up to four truncated completed items). The initial plan can be supplied as `plan_steps`, an array of two to eight objects with `action`, `estimated_seconds`, and `done_when`. Structured steps are validated without truncation, persisted as a compact deterministic summary, and their summed estimates become the authoritative plan ETA. The legacy `note` plan remains accepted for compatibility. Returns current pressure and the accepted `plan_step_count` without checkpoint history.
+Stores bounded progress and a compact note (or up to four truncated completed items). The initial plan can be supplied as `plan_steps`, an array of two to eight objects with `action`, `estimated_seconds`, and `done_when`. Structured steps are validated without truncation, persisted as a compact deterministic summary, and their summed estimates become the authoritative plan ETA. The legacy `note` plan remains accepted for compatibility. A complete initial or replacement plan is rejected before mutation when its ETA exceeds the task's monotonic remaining budget; an ETA exactly at the boundary is accepted. Returns current pressure and the accepted `plan_step_count` without checkpoint history.
 
 ### adjust_task
 
