@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.10:** replacement plans now require `replan=true`, preventing an ordinary checkpoint from silently overwriting the active plan while preserving intentional replanning. See the [changelog](CHANGELOG.md#0210---2026-09-09).
+**v0.2.11:** later checkpoints now retain the last accepted progress and ETA when those fields are omitted, preventing note-only updates from erasing the planning signals used to finish work on time. See the [changelog](CHANGELOG.md#0211---2026-09-10).
 
 ## Features
 
