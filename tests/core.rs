@@ -661,6 +661,29 @@ fn replacement_plan_requires_explicit_replan_and_rejection_is_atomic() {
 }
 
 #[test]
+fn omitted_checkpoint_estimates_preserve_current_planning_state() {
+    let (_, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("preserve-estimates", 30.0))
+        .unwrap();
+    manager
+        .checkpoint(plan("preserve-estimates", 0.25, 15.0))
+        .unwrap();
+
+    let mut note_only = CheckpointRequest::new("preserve-estimates");
+    note_only.note = Some("Completed the current action without changing the estimate".into());
+    let accepted = manager.checkpoint(note_only).unwrap();
+
+    assert_eq!(accepted.task.checkpoints, 2);
+    assert_eq!(accepted.checkpoint.progress, Some(0.25));
+    assert_eq!(
+        accepted.checkpoint.estimated_remaining_work_secs,
+        Some(15.0)
+    );
+    assert_eq!(accepted.task.last_checkpoint, Some(accepted.checkpoint));
+}
+
+#[test]
 fn finish_reports_real_overrun() {
     let (clock, manager) = manager();
     manager

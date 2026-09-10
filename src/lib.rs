@@ -966,13 +966,23 @@ impl TaskManager {
                     "progress cannot decrease unless replan=true".into(),
                 ));
             }
+            let previous_progress = task
+                .last_checkpoint
+                .as_ref()
+                .and_then(|checkpoint| checkpoint.progress);
+            let previous_eta = task
+                .last_checkpoint
+                .as_ref()
+                .and_then(|checkpoint| checkpoint.estimated_remaining_work_secs);
             task.checkpoints = task.checkpoints.saturating_add(1);
             let checkpoint = CheckpointRecord {
                 sequence: task.checkpoints,
                 elapsed_secs: task.runtime_secs(now),
                 note: request.note,
-                progress: request.progress,
-                estimated_remaining_work_secs: request.estimated_remaining_work_secs,
+                progress: request.progress.or(previous_progress),
+                estimated_remaining_work_secs: request
+                    .estimated_remaining_work_secs
+                    .or(previous_eta),
                 plan_complete: request.plan_complete,
             };
             if request.plan_complete {
