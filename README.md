@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.11:** later checkpoints now retain the last accepted progress and ETA when those fields are omitted, preventing note-only updates from erasing the planning signals used to finish work on time. See the [changelog](CHANGELOG.md#0211---2026-09-10).
+**v0.2.12:** reporting 100% progress now moves directly to validation unless finalization or emergency already applies, preventing completed work from returning to exploration because of an old ETA. See the [changelog](CHANGELOG.md#0212---2026-09-10).
 
 ## Features
 

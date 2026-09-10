@@ -84,11 +84,16 @@ pub fn evaluate_time_policy(input: PolicyInput) -> PolicyDecision {
     let usable_work = (remaining - reserved).max(0.0);
 
     let progress = input.progress_percent.map(|p| p.clamp(0.0, 100.0));
+    let work_complete = progress.is_some_and(|progress| progress >= 100.0);
     let expected_progress = (elapsed / (total - reserved).max(0.001) * 100.0).clamp(0.0, 100.0);
     let eta_critical = input
         .estimated_remaining_work_secs
         .is_some_and(|eta| eta.max(0.0) > usable_work.max(0.001));
-    let schedule = if remaining <= f64::EPSILON || eta_critical {
+    let schedule = if remaining <= f64::EPSILON {
+        ScheduleStatus::Critical
+    } else if work_complete {
+        ScheduleStatus::Ahead
+    } else if eta_critical {
         ScheduleStatus::Critical
     } else if let Some(progress) = progress {
         let delta = progress - expected_progress;
@@ -115,6 +120,8 @@ pub fn evaluate_time_policy(input: PolicyInput) -> PolicyDecision {
         (TimeMode::Emergency, "emergency_window")
     } else if remaining <= finalize_trigger {
         (TimeMode::Finalize, "finalization_window")
+    } else if work_complete {
+        (TimeMode::Validate, "work_reported_complete")
     } else if remaining <= reserved {
         (TimeMode::Validate, "validation_reserve")
     } else if matches!(schedule, ScheduleStatus::Behind | ScheduleStatus::Critical)
@@ -243,5 +250,22 @@ mod tests {
             assert_eq!(decision.remaining_secs, 0.0);
             assert!(decision.must_stop);
         }
+    }
+
+    #[test]
+    fn completed_work_moves_directly_to_validation() {
+        let decision = evaluate_time_policy(PolicyInput {
+            total_secs: 1_000.0,
+            elapsed_secs: 10.0,
+            progress_percent: Some(100.0),
+            estimated_remaining_work_secs: Some(10_000.0),
+            ..PolicyInput::default()
+        });
+
+        assert_eq!(decision.schedule, ScheduleStatus::Ahead);
+        assert_eq!(decision.mode, TimeMode::Validate);
+        assert!(decision.must_converge);
+        assert!(decision.must_validate);
+        assert_eq!(decision.reason, "work_reported_complete");
     }
 }
