@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.12:** reporting 100% progress now moves directly to validation unless finalization or emergency already applies, preventing completed work from returning to exploration because of an old ETA. See the [changelog](CHANGELOG.md#0212---2026-09-10).
+**v0.2.13:** initial and replacement plan ETAs must fit the work budget remaining after child reservations and the adaptive reserve, so accepted plans cannot consume validation or finalization capacity. See the [changelog](CHANGELOG.md#0213---2026-09-15).
 
 ## Features
 
