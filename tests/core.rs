@@ -228,7 +228,7 @@ fn process_restart_charges_wall_clock_downtime() {
             task_id: "restart".into(),
             note: Some("Persist initial plan before process restart".into()),
             progress: Some(0.0),
-            estimated_remaining_work_secs: Some(8.0),
+            estimated_remaining_work_secs: Some(7.92),
             plan_complete: true,
             replan: false,
         })
