@@ -228,7 +228,7 @@ fn process_restart_charges_wall_clock_downtime() {
             task_id: "restart".into(),
             note: Some("Persist initial plan before process restart".into()),
             progress: Some(0.0),
-            estimated_remaining_work_secs: Some(8.0),
+            estimated_remaining_work_secs: Some(7.92),
             plan_complete: true,
             replan: false,
         })
@@ -833,7 +833,7 @@ fn tick_does_not_write_snapshot() {
 }
 
 #[test]
-fn plan_eta_must_fit_remaining_budget_and_rejection_is_atomic() {
+fn plan_eta_must_preserve_reserve_and_rejection_is_atomic() {
     let (clock, manager) = manager();
     manager
         .start_task(StartTaskRequest::new("plan-fit", 10.0))
@@ -844,14 +844,14 @@ fn plan_eta_must_fit_remaining_budget_and_rejection_is_atomic() {
         task_id: "plan-fit".into(),
         note: Some("Inspect the path; implement the fix; verify the result".into()),
         progress: Some(0.0),
-        estimated_remaining_work_secs: Some(8.000_000_002),
+        estimated_remaining_work_secs: Some(7.040_000_002),
         plan_complete: true,
         replan: false,
     };
     assert!(matches!(
         manager.checkpoint(plan.clone()),
         Err(TaskError::Invalid(message))
-            if message == "plan ETA cannot exceed remaining task budget"
+            if message == "plan ETA cannot exceed available work budget"
     ));
 
     let unchanged = manager.get_task("plan-fit").unwrap();
@@ -859,8 +859,43 @@ fn plan_eta_must_fit_remaining_budget_and_rejection_is_atomic() {
     assert!(!unchanged.plan_submitted);
     assert!(unchanged.last_checkpoint.is_none());
 
-    plan.estimated_remaining_work_secs = Some(8.0);
+    plan.estimated_remaining_work_secs = Some(7.04);
     let accepted = manager.checkpoint(plan).unwrap();
     assert_eq!(accepted.task.checkpoints, 1);
+    assert!(accepted.task.plan_submitted);
+    assert!((accepted.task.adaptive_reserve_secs - 0.96).abs() <= 1e-9);
+}
+
+#[test]
+fn plan_eta_must_preserve_active_child_reservations() {
+    let (_, manager) = manager();
+    manager
+        .start_task(StartTaskRequest::new("plan-parent", 20.0))
+        .unwrap();
+    manager
+        .start_task(StartTaskRequest::new("plan-child", 5.0).with_parent("plan-parent"))
+        .unwrap();
+
+    let mut plan = CheckpointRequest {
+        task_id: "plan-parent".into(),
+        note: Some("Complete parent work while preserving delegated child capacity".into()),
+        progress: Some(0.0),
+        estimated_remaining_work_secs: Some(12.600_000_002),
+        plan_complete: true,
+        replan: false,
+    };
+    assert!(matches!(
+        manager.checkpoint(plan.clone()),
+        Err(TaskError::Invalid(message))
+            if message == "plan ETA cannot exceed available work budget"
+    ));
+
+    let unchanged = manager.get_task("plan-parent").unwrap();
+    assert_eq!(unchanged.checkpoints, 0);
+    assert!(!unchanged.plan_submitted);
+    assert_eq!(unchanged.child_reserved_secs, 5.0);
+
+    plan.estimated_remaining_work_secs = Some(12.6);
+    let accepted = manager.checkpoint(plan).unwrap();
     assert!(accepted.task.plan_submitted);
 }

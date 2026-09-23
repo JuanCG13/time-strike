@@ -947,10 +947,16 @@ impl TaskManager {
             if request.plan_complete
                 && let Some(eta) = request.estimated_remaining_work_secs
             {
-                let remaining = (task.budget_secs - task.runtime_secs(now)).max(0.0);
-                if eta > remaining + EPSILON {
+                let available = self.available_secs(
+                    task.budget_secs,
+                    task.runtime_secs(now),
+                    task.child_reserved_secs,
+                    &task.mode,
+                    &task.schedule,
+                );
+                if eta > available + EPSILON {
                     return Err(TaskError::Invalid(
-                        "plan ETA cannot exceed remaining task budget".into(),
+                        "plan ETA cannot exceed available work budget".into(),
                     ));
                 }
             }
