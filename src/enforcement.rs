@@ -141,6 +141,12 @@ impl ActionLeaseLedger {
         if expires_at <= request_started {
             return Err(ActionLeaseError::Expired);
         }
+        if request_started
+            .checked_add(duration)
+            .is_none_or(|finish| finish > expires_at)
+        {
+            return Err(ActionLeaseError::WouldExceedDeadline);
+        }
 
         let mut state = self
             .state
@@ -511,6 +517,47 @@ mod tests {
         ledger
             .consume("lease-1", "task-1", "write", 2.0, Duration::from_secs(2))
             .unwrap();
+    }
+
+    #[test]
+    fn impossible_registration_does_not_supersede_active_authority() {
+        let ledger = ActionLeaseLedger::new(Duration::from_secs(4));
+        let active = grant("active", "task-1", "inspect", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "inspect", 1.0, &active)
+            .unwrap();
+
+        let impossible = grant("impossible", "task-1", "write", 2.0);
+        assert_eq!(
+            ledger.register(
+                Duration::from_secs(3),
+                "task-1",
+                "write",
+                2.0,
+                &impossible,
+            ),
+            Err(ActionLeaseError::WouldExceedDeadline)
+        );
+
+        ledger
+            .consume(
+                "active",
+                "task-1",
+                "inspect",
+                1.0,
+                Duration::from_secs(3),
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.consume(
+                "impossible",
+                "task-1",
+                "write",
+                2.0,
+                Duration::from_secs(3)
+            ),
+            Err(ActionLeaseError::UnknownLease)
+        );
     }
 
     #[test]

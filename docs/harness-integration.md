@@ -52,8 +52,9 @@ ephemeral ledger for the current MCP connection. Under the same ledger lock, rej
 require each accepted request start to be strictly newer than the task's monotonic
 connection-local watermark (equal anchors fail closed), retaining that watermark after use;
 duplicate delivery, retry and concurrent registration must fail closed. Then atomically
-supersede the prior lease for that task and set its expiration to the earlier of request-start plus
-`expires_in_seconds` and the host's hard deadline. Consumption must compare the
+set its expiration to the earlier of request-start plus `expires_in_seconds` and the
+host's hard deadline, reject an ETA that cannot finish by that bound before changing
+ledger state, and only then supersede the prior lease for that task. Consumption must compare the
 execution task inside the same atomic operation and reject unknown or invented ids,
 a different task, action or ETA, replay, duplicate registration, concurrent use,
 superseded leases and any action whose full ETA no longer fits. Never parse or trust a
