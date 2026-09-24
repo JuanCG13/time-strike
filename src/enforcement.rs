@@ -529,33 +529,15 @@ mod tests {
 
         let impossible = grant("impossible", "task-1", "write", 2.0);
         assert_eq!(
-            ledger.register(
-                Duration::from_secs(3),
-                "task-1",
-                "write",
-                2.0,
-                &impossible,
-            ),
+            ledger.register(Duration::from_secs(3), "task-1", "write", 2.0, &impossible,),
             Err(ActionLeaseError::WouldExceedDeadline)
         );
 
         ledger
-            .consume(
-                "active",
-                "task-1",
-                "inspect",
-                1.0,
-                Duration::from_secs(3),
-            )
+            .consume("active", "task-1", "inspect", 1.0, Duration::from_secs(3))
             .unwrap();
         assert_eq!(
-            ledger.consume(
-                "impossible",
-                "task-1",
-                "write",
-                2.0,
-                Duration::from_secs(3)
-            ),
+            ledger.consume("impossible", "task-1", "write", 2.0, Duration::from_secs(3)),
             Err(ActionLeaseError::UnknownLease)
         );
     }
