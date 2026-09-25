@@ -658,8 +658,8 @@ impl TimeStrikeServer {
 
 #[tool_handler(
     name = "time-strike",
-    version = "0.2.14",
-    instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint before costly work with plan_complete=true and 2-8 plan_steps; each needs action, estimated_seconds, and done_when. Any replacement plan also requires replan=true. Before costly work call tick with current_action and current_action_estimated_seconds, then proceed only with the returned action_lease and its relative expiry. Call tick after searches, edits, tests, delegation, and tool calls. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
+    version = "0.2.15",
+    instructions = "Immediately call start_task for deadline work. If directive=submit_plan, call checkpoint before costly work with plan_complete=true and 2-8 plan_steps; each needs action, estimated_seconds, and done_when. Any replacement plan also requires replan=true. Before costly work call tick with current_action and current_action_estimated_seconds as a pair, then proceed only with the returned action_lease and its relative expiry. Call tick after searches, edits, tests, delegation, and tool calls. On converge_required_only stop exploration and perform required work only. On validate only verify. On finalize deliver. On stop return immediately. Never increase the budget."
 )]
 impl ServerHandler for TimeStrikeServer {}
 
@@ -675,6 +675,11 @@ fn validate_action_proposal(
     action: Option<&str>,
     estimated_seconds: Option<f64>,
 ) -> Result<(), String> {
+    if action.is_some() != estimated_seconds.is_some() {
+        return Err(
+            "current_action and current_action_estimated_seconds must be provided together".into(),
+        );
+    }
     if let Some(action) = action {
         let action = action.trim();
         if action.is_empty() {
@@ -996,6 +1001,9 @@ mod tests {
         assert!(validate_action_proposal(Some("Inspect"), Some(-1.0)).is_err());
         assert!(validate_action_proposal(Some("Inspect"), Some(f64::NAN)).is_err());
         assert!(validate_action_proposal(Some(&"a".repeat(161)), Some(1.0)).is_err());
+        assert!(validate_action_proposal(Some("Inspect"), None).is_err());
+        assert!(validate_action_proposal(None, Some(1.0)).is_err());
+        assert!(validate_action_proposal(None, None).is_ok());
         assert!(validate_action_proposal(Some("Inspect"), Some(1.0)).is_ok());
     }
 }
