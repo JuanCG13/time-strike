@@ -11,6 +11,7 @@ before delegation, before validation, and before delivery.
 Respect mode, schedule, max_new_action_seconds, action_lease, must_converge,
 must_validate, must_finalize, and must_stop.
 Before costly work, capture monotonic time, then send current_action and its ETA to tick.
+Supply that action and ETA together, or omit both for an observational tick; partial proposals fail without advancing task state.
 Consume the bound one-shot action_lease atomically before its anchored expiry.
 Submit the first checkpoint with plan_complete=true and two to eight plan_steps.
 Each step should contain one action, estimated_seconds, and an observable done_when.
