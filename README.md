@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.14:** host-side lease registration rejects actions whose ETA cannot fit after the expiry is clamped to the host deadline, without superseding an older usable lease. See the [changelog](CHANGELOG.md#0214---2026-09-24).
+**v0.2.15:** MCP `tick` rejects partial action proposals unless `current_action` and its ETA are supplied together, preventing ambiguous unleased work from advancing task state. See the [changelog](CHANGELOG.md#0215---2026-09-25).
 
 ## Features
 
