@@ -687,13 +687,7 @@ mod tests {
 
         let replacement = grant("replacement", "task-1", "write", 1.0);
         ledger
-            .register(
-                Duration::from_secs(1),
-                "task-1",
-                "write",
-                1.0,
-                &replacement,
-            )
+            .register(Duration::from_secs(1), "task-1", "write", 1.0, &replacement)
             .unwrap();
         ledger
             .consume(
