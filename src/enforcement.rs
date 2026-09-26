@@ -214,6 +214,41 @@ impl ActionLeaseLedger {
         Ok(())
     }
 
+    /// Revokes one registered lease without preventing later leases for its task.
+    ///
+    /// Revocation is idempotent for an unconsumed lease and shares the ledger
+    /// lock with registration and consumption. If consumption linearizes first,
+    /// the host receives [`ActionLeaseError::AlreadyConsumed`] and remains
+    /// responsible for interrupting the dispatched action.
+    pub fn revoke_lease(&self, lease_id: &str) -> Result<(), ActionLeaseError> {
+        if lease_id.trim().is_empty() || lease_id.len() > MAX_LEASE_ID_BYTES {
+            return Err(ActionLeaseError::BindingMismatch("lease_id"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| ActionLeaseError::Unavailable)?;
+        let task_id = {
+            let lease = state
+                .leases
+                .get_mut(lease_id)
+                .ok_or(ActionLeaseError::UnknownLease)?;
+            if lease.consumed {
+                return Err(ActionLeaseError::AlreadyConsumed);
+            }
+            lease.superseded = true;
+            lease.task_id.clone()
+        };
+        if state
+            .active_by_task
+            .get(&task_id)
+            .is_some_and(|active_id| active_id == lease_id)
+        {
+            state.active_by_task.remove(&task_id);
+        }
+        Ok(())
+    }
+
     /// Atomically consumes a lease immediately before executing its action.
     pub fn consume(
         &self,
@@ -633,6 +668,96 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn lease_revocation_blocks_only_that_action_and_allows_replacement() {
+        let ledger = ActionLeaseLedger::new(Duration::from_secs(20));
+        let cancelled = grant("cancelled", "task-1", "inspect", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "inspect", 1.0, &cancelled)
+            .unwrap();
+
+        ledger.revoke_lease("cancelled").unwrap();
+        ledger.revoke_lease("cancelled").unwrap();
+        assert_eq!(
+            ledger.consume("cancelled", "task-1", "inspect", 1.0, Duration::ZERO),
+            Err(ActionLeaseError::Superseded)
+        );
+
+        let replacement = grant("replacement", "task-1", "write", 1.0);
+        ledger
+            .register(Duration::from_secs(1), "task-1", "write", 1.0, &replacement)
+            .unwrap();
+        ledger
+            .consume(
+                "replacement",
+                "task-1",
+                "write",
+                1.0,
+                Duration::from_secs(1),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn revoking_superseded_lease_preserves_newer_authority() {
+        let ledger = ActionLeaseLedger::new(Duration::from_secs(20));
+        let older = grant("older", "task-1", "inspect", 1.0);
+        let newer = grant("newer", "task-1", "write", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "inspect", 1.0, &older)
+            .unwrap();
+        ledger
+            .register(Duration::from_secs(1), "task-1", "write", 1.0, &newer)
+            .unwrap();
+
+        ledger.revoke_lease("older").unwrap();
+        ledger
+            .consume("newer", "task-1", "write", 1.0, Duration::from_secs(1))
+            .unwrap();
+    }
+
+    #[test]
+    fn lease_revocation_and_consumption_have_one_winner() {
+        let ledger = Arc::new(ActionLeaseLedger::new(Duration::from_secs(20)));
+        let lease = grant("lease-1", "task-1", "write", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "write", 1.0, &lease)
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let consuming_ledger = Arc::clone(&ledger);
+        let consuming_barrier = Arc::clone(&barrier);
+        let consume = thread::spawn(move || {
+            consuming_barrier.wait();
+            consuming_ledger.consume("lease-1", "task-1", "write", 1.0, Duration::ZERO)
+        });
+        let revoking_ledger = Arc::clone(&ledger);
+        let revoking_barrier = Arc::clone(&barrier);
+        let revoke = thread::spawn(move || {
+            revoking_barrier.wait();
+            revoking_ledger.revoke_lease("lease-1")
+        });
+        barrier.wait();
+
+        let outcome = (consume.join().unwrap(), revoke.join().unwrap());
+        assert!(matches!(
+            outcome,
+            (Ok(()), Err(ActionLeaseError::AlreadyConsumed))
+                | (Err(ActionLeaseError::Superseded), Ok(()))
+        ));
+
+        let replacement = grant("replacement", "task-1", "verify", 1.0);
+        ledger
+            .register(
+                Duration::from_secs(1),
+                "task-1",
+                "verify",
+                1.0,
+                &replacement,
+            )
+            .unwrap();
     }
 
     #[test]

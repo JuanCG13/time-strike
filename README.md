@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.15:** MCP `tick` rejects partial action proposals unless `current_action` and its ETA are supplied together, preventing ambiguous unleased work from advancing task state. See the [changelog](CHANGELOG.md#0215---2026-09-25).
+**v0.2.16:** hosts can atomically revoke one pending action lease without permanently blocking later leases for the same task, so cancelled work cannot start while replanning can continue on the existing connection. See the [changelog](CHANGELOG.md#0216---2026-09-26).
 
 ## Features
 
