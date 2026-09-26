@@ -50,6 +50,13 @@ authority, supersession and one-shot consumption. It stores only connection-loca
 ephemeral records; hosts still own dispatch, cancellation, privilege checks and
 the absolute deadline.
 
+For action cancellation, `revoke_lease` atomically makes one registered,
+unconsumed lease unusable while leaving the task eligible for later leases. It is
+idempotent for that pending lease and removes the task's active pointer only when
+it still names the cancelled lease, so delayed cancellation cannot erase newer
+authority. If consumption wins the lock first, revocation reports that dispatch
+was already admitted and the host must interrupt the running operation.
+
 For task cancellation, `revoke_task` is the connection-local authority barrier.
 It is idempotent and linearized by the same mutex as registration and consumption.
 After revocation wins the lock, the task's pending lease is unusable and no delayed

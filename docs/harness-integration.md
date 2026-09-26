@@ -69,6 +69,12 @@ ledger per MCP connection using the host's absolute monotonic deadline, call
 fresh ledger. Other host languages must preserve the same atomicity and fail-closed
 semantics, including rejection of delayed responses from older requests.
 
+When only one pending action is cancelled but its task remains active, call
+`revoke_lease(lease_id)`. It shares the registration/consumption lock, is
+idempotent for an unconsumed lease, does not remove a newer active lease, and lets
+the task register replacement authority. If it reports `AlreadyConsumed`, dispatch
+won the race and the host must interrupt that operation through its executor.
+
 When a task is cancelled, stopped or otherwise loses dispatch authority, the
 Rust host must call `revoke_task(task_id)` before acknowledging that transition.
 Revocation is idempotent and uses the same lock as registration and consumption:
