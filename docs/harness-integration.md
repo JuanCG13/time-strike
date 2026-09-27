@@ -83,6 +83,12 @@ response for that task cannot restore authority. A consumption that linearizes
 first has already admitted the action and must be cancelled by the host's normal
 execution mechanism. Revocation does not affect other tasks sharing the ledger.
 
+Before acknowledging MCP connection shutdown, call `revoke_all()`. The ledger is
+then permanently closed: pending leases and delayed or future responses for every
+task fail closed. The operation is idempotent and shares the registration/consume
+lock, so a concurrent consume either completes first or is rejected; an action
+already admitted remains the host executor's responsibility to interrupt.
+
 ## Subagents
 
 Call `tick` before delegation. Start each child with `parent_task_id`; Time Strike clamps the child request to parent availability. Preserve parent time for integration, validation, and finalization. Concurrent agents must share one long-lived MCP server process to share task state.

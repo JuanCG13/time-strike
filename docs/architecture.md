@@ -64,6 +64,11 @@ or future response can register replacement authority; unrelated tasks remain
 available. If consumption wins first, dispatch has already been admitted and the
 host remains responsible for interrupting that running operation.
 
+Before connection shutdown, `revoke_all` closes the ledger under that same mutex.
+Once it wins, every pending consume and future or delayed registration fails closed
+for every task. A consume that wins first has already admitted its action and remains
+the host executor's responsibility to interrupt. Repeated closure is idempotent.
+
 ## Persistence
 
 `FileStore` holds an exclusive advisory lock for its lifetime, fails closed for a second writer, writes unique `0600` temporary files, flushes, atomically renames and syncs the parent directory where supported. A failed save rolls the in-memory mutation back. Writes occur on lifecycle operations, not through a polling watchdog. Snapshot v2 stores elapsed state and wall-clock save time.
