@@ -82,6 +82,7 @@ struct LedgerState {
     active_by_task: HashMap<String, String>,
     latest_request_by_task: HashMap<String, Duration>,
     revoked_tasks: HashSet<String>,
+    revoked_all: bool,
 }
 
 /// Thread-safe, monotonic ledger for one-shot host action authority.
@@ -152,6 +153,9 @@ impl ActionLeaseLedger {
             .state
             .lock()
             .map_err(|_| ActionLeaseError::Unavailable)?;
+        if state.revoked_all {
+            return Err(ActionLeaseError::Superseded);
+        }
         if state.revoked_tasks.contains(&grant.task_id) {
             return Err(ActionLeaseError::Superseded);
         }
@@ -214,6 +218,20 @@ impl ActionLeaseLedger {
         Ok(())
     }
 
+    /// Permanently revokes every action authority on this connection.
+    ///
+    /// Hosts should call this before acknowledging connection shutdown. It
+    /// shares the ledger lock with registration and consumption, so pending
+    /// leases and delayed responses cannot start or restore work after it wins.
+    pub fn revoke_all(&self) -> Result<(), ActionLeaseError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| ActionLeaseError::Unavailable)?;
+        state.revoked_all = true;
+        Ok(())
+    }
+
     /// Revokes one registered lease without preventing later leases for its task.
     ///
     /// Revocation is idempotent for an unconsumed lease and shares the ledger
@@ -266,6 +284,9 @@ impl ActionLeaseLedger {
             .state
             .lock()
             .map_err(|_| ActionLeaseError::Unavailable)?;
+        if state.revoked_all {
+            return Err(ActionLeaseError::Superseded);
+        }
         let lease = state
             .leases
             .get_mut(lease_id)
@@ -758,6 +779,71 @@ mod tests {
                 &replacement,
             )
             .unwrap();
+    }
+
+    #[test]
+    fn global_revocation_closes_every_task_and_rejects_delayed_responses() {
+        let ledger = ActionLeaseLedger::new(Duration::from_secs(20));
+        let first = grant("first", "task-1", "write", 1.0);
+        let second = grant("second", "task-2", "inspect", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "write", 1.0, &first)
+            .unwrap();
+        ledger
+            .register(Duration::ZERO, "task-2", "inspect", 1.0, &second)
+            .unwrap();
+
+        ledger.revoke_all().unwrap();
+        ledger.revoke_all().unwrap();
+        assert_eq!(
+            ledger.consume("first", "task-1", "write", 1.0, Duration::ZERO),
+            Err(ActionLeaseError::Superseded)
+        );
+        assert_eq!(
+            ledger.consume("second", "task-2", "inspect", 1.0, Duration::ZERO),
+            Err(ActionLeaseError::Superseded)
+        );
+
+        let delayed = grant("delayed", "task-3", "verify", 1.0);
+        assert_eq!(
+            ledger.register(Duration::from_secs(1), "task-3", "verify", 1.0, &delayed,),
+            Err(ActionLeaseError::Superseded)
+        );
+    }
+
+    #[test]
+    fn global_revocation_and_consumption_have_one_winner() {
+        let ledger = Arc::new(ActionLeaseLedger::new(Duration::from_secs(20)));
+        let lease = grant("lease-1", "task-1", "write", 1.0);
+        ledger
+            .register(Duration::ZERO, "task-1", "write", 1.0, &lease)
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let consuming_ledger = Arc::clone(&ledger);
+        let consuming_barrier = Arc::clone(&barrier);
+        let consume = thread::spawn(move || {
+            consuming_barrier.wait();
+            consuming_ledger.consume("lease-1", "task-1", "write", 1.0, Duration::ZERO)
+        });
+        let revoking_ledger = Arc::clone(&ledger);
+        let revoking_barrier = Arc::clone(&barrier);
+        let revoke = thread::spawn(move || {
+            revoking_barrier.wait();
+            revoking_ledger.revoke_all()
+        });
+        barrier.wait();
+
+        let outcome = (consume.join().unwrap(), revoke.join().unwrap());
+        assert!(matches!(
+            outcome,
+            (Ok(()), Ok(())) | (Err(ActionLeaseError::Superseded), Ok(()))
+        ));
+        let delayed = grant("delayed", "task-1", "verify", 1.0);
+        assert_eq!(
+            ledger.register(Duration::from_secs(1), "task-1", "verify", 1.0, &delayed,),
+            Err(ActionLeaseError::Superseded)
+        );
     }
 
     #[test]

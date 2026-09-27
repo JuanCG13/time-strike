@@ -12,6 +12,12 @@ All notable improvements to Time Strike are recorded here.
 - 2026-08-29: hosts can set `TIME_STRIKE_DEADLINE_UNIX_MS` before launching the MCP server; the wall deadline is converted once to an immutable monotonic limit that is enforced under the task lock during both creation and adjustment, rejects starts delayed past the limit, prevents authorized budget increases from bypassing it, and reports the active deadline authority.
 - 2026-08-28: `tick` now reports actual elapsed time, budget-accounted elapsed time, overrun, and deadline compliance separately; actual elapsed time also survives persistence without changing the existing `TaskView` layout or its live/finish elapsed semantics, and legacy v2 snapshots remain recoverable.
 
+## [0.2.17] - 2026-09-27
+
+### Added
+
+- `ActionLeaseLedger::revoke_all` atomically closes connection-local action authority before host shutdown. Pending leases and delayed responses across every task fail closed after shutdown, while a concurrent consume-versus-close race still has one mutex-linearized winner.
+
 ## [0.2.16] - 2026-09-26
 
 ### Added
