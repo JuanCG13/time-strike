@@ -96,7 +96,9 @@ fn action_lease_revoke_all_10k(c: &mut Criterion) {
                 ledger
             },
             |ledger| {
-                ledger.revoke_all().expect("benchmark ledger closes globally");
+                ledger
+                    .revoke_all()
+                    .expect("benchmark ledger closes globally");
                 black_box(ledger);
             },
             BatchSize::LargeInput,
