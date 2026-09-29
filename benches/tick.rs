@@ -145,7 +145,6 @@ fn action_lease_revoke_lease_10k(c: &mut Criterion) {
     });
 }
 
-
 fn action_lease_revoke_task_10k(c: &mut Criterion) {
     c.bench_function("action_lease_revoke_task_10k_pending", |bench| {
         bench.iter_batched(
