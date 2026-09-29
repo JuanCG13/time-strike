@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.19:** maintainers can benchmark targeted single-lease cancellation with 10,000 pending leases while excluding setup from the timed path, making scale regressions visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0219---2026-09-28).
+**v0.2.20:** maintainers can benchmark task-scoped cancellation with 10,000 pending leases while excluding setup from the timed path, making scale regressions visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0220---2026-09-29).
 
 ## Features
 
@@ -255,7 +255,7 @@ python tests/benchmark_tools.py
 python tests/benchmark_transport.py
 ```
 
-A prior local 10,000-operation baseline measured the core policy at approximately 1.48 µs mean and local MCP stdio `tick` at approximately 75.87 µs mean. Treat these as development-host reference numbers, not a performance guarantee; hardware, Rust, OS scheduling, and client framing affect results. Criterion benchmarks are in [`benches/tick.rs`](benches/tick.rs). The `action_lease_revoke_all_10k_pending` and `action_lease_revoke_lease_10k_pending` benchmarks prepare 10,000 pending leases outside the timed path, then measure only the global or targeted cancellation barrier.
+A prior local 10,000-operation baseline measured the core policy at approximately 1.48 µs mean and local MCP stdio `tick` at approximately 75.87 µs mean. Treat these as development-host reference numbers, not a performance guarantee; hardware, Rust, OS scheduling, and client framing affect results. Criterion benchmarks are in [`benches/tick.rs`](benches/tick.rs). The `action_lease_revoke_all_10k_pending`, `action_lease_revoke_lease_10k_pending`, and `action_lease_revoke_task_10k_pending` benchmarks prepare 10,000 pending leases outside the timed path, then measure only the global, single-lease, or task-scoped cancellation barrier.
 
 ## Contributing
 
