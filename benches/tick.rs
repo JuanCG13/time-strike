@@ -67,7 +67,6 @@ fn action_lease_register_consume_10k(c: &mut Criterion) {
     });
 }
 
-
 fn action_lease_consume_10k(c: &mut Criterion) {
     c.bench_function("action_lease_consume_10k_pending", |bench| {
         bench.iter_batched(
