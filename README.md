@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.21:** maintainers can benchmark successful lease consumption with 10,000 pending leases while excluding setup from the timed path, making host dispatch scale regressions visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0221---2026-09-29).
+**v0.2.22:** maintainers can benchmark registration of a new action lease with 10,000 pending leases while excluding setup from the timed path, making host admission scale regressions visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0222---2026-09-30).
 
 ## Features
 
@@ -255,7 +255,7 @@ python tests/benchmark_tools.py
 python tests/benchmark_transport.py
 ```
 
-A prior local 10,000-operation baseline measured the core policy at approximately 1.48 µs mean and local MCP stdio `tick` at approximately 75.87 µs mean. Treat these as development-host reference numbers, not a performance guarantee; hardware, Rust, OS scheduling, and client framing affect results. Criterion benchmarks are in [`benches/tick.rs`](benches/tick.rs). The `action_lease_consume_10k_pending`, `action_lease_revoke_all_10k_pending`, `action_lease_revoke_lease_10k_pending`, and `action_lease_revoke_task_10k_pending` benchmarks prepare 10,000 pending leases outside the timed path, then measure only successful dispatch authorization or the global, single-lease, and task-scoped cancellation barriers.
+A prior local 10,000-operation baseline measured the core policy at approximately 1.48 µs mean and local MCP stdio `tick` at approximately 75.87 µs mean. Treat these as development-host reference numbers, not a performance guarantee; hardware, Rust, OS scheduling, and client framing affect results. Criterion benchmarks are in [`benches/tick.rs`](benches/tick.rs). The `action_lease_register_10k_pending`, `action_lease_consume_10k_pending`, `action_lease_revoke_all_10k_pending`, `action_lease_revoke_lease_10k_pending`, and `action_lease_revoke_task_10k_pending` benchmarks prepare 10,000 pending leases outside the timed path, then measure only new authority admission, successful dispatch authorization, or the global, single-lease, and task-scoped cancellation barriers.
 
 ## Contributing
 
