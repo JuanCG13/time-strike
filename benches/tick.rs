@@ -156,7 +156,7 @@ fn action_lease_register_10k(c: &mut Criterion) {
                         "bench-10000",
                         "benchmark action",
                         0.000_001,
-                        &grant,
+                        grant,
                     )
                     .expect("benchmark lease registers at scale");
                 black_box(ledger);
