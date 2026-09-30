@@ -114,7 +114,7 @@ fn action_lease_consume_10k(c: &mut Criterion) {
 
 fn action_lease_register_10k(c: &mut Criterion) {
     c.bench_function("action_lease_register_10k_pending", |bench| {
-        bench.iter_batched(
+        bench.iter_batched_ref(
             || {
                 let ledger = ActionLeaseLedger::new(Duration::from_secs(100));
                 for index in 0..10_000 {
