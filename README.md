@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.22:** maintainers can benchmark registration of a new action lease with 10,000 pending leases while excluding setup from the timed path, making host admission scale regressions visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0222---2026-09-30).
+**v0.2.23:** maintainers can benchmark `tick` with 10,000 active tasks while excluding registry setup from the timed path, making core lookup regressions visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0223---2026-10-01).
 
 ## Features
 
