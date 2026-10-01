@@ -12,6 +12,12 @@ All notable improvements to Time Strike are recorded here.
 - 2026-08-29: hosts can set `TIME_STRIKE_DEADLINE_UNIX_MS` before launching the MCP server; the wall deadline is converted once to an immutable monotonic limit that is enforced under the task lock during both creation and adjustment, rejects starts delayed past the limit, prevents authorized budget increases from bypassing it, and reports the active deadline authority.
 - 2026-08-28: `tick` now reports actual elapsed time, budget-accounted elapsed time, overrun, and deadline compliance separately; actual elapsed time also survives persistence without changing the existing `TaskView` layout or its live/finish elapsed semantics, and legacy v2 snapshots remain recoverable.
 
+## [0.2.22] - 2026-09-30
+
+### Added
+
+- Added a Criterion benchmark that prepares 10,000 pending leases outside the timed path and measures only registration of a new lease for a distinct task. Maintainers can now detect size-dependent regressions in host-side action-authority admission without changing runtime behavior or adding dependencies.
+
 ## [0.2.21] - 2026-09-29
 
 ### Added
