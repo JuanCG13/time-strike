@@ -1,7 +1,9 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 use time_strike::enforcement::{ActionLeaseGrant, ActionLeaseLedger};
-use time_strike::{ManualClock, StartTaskRequest, TaskManager, TickRequest};
+use time_strike::{
+    CheckpointRequest, ManualClock, StartTaskRequest, TaskManager, TickRequest,
+};
 
 fn tick_core_10k(c: &mut Criterion) {
     let clock = ManualClock::new();
@@ -32,6 +34,32 @@ fn tick_core_10k_active_tasks(c: &mut Criterion) {
                 manager
                     .tick(TickRequest::new("bench-9999"))
                     .expect("benchmark tick"),
+            )
+        });
+    });
+}
+
+fn checkpoint_core_10k_active_tasks(c: &mut Criterion) {
+    let manager = TaskManager::new(ManualClock::new());
+    for index in 0..10_000 {
+        manager
+            .start_task(StartTaskRequest::new(format!("bench-{index}"), 1_000.0))
+            .expect("benchmark task starts");
+    }
+    let mut initial_plan = CheckpointRequest::new("bench-9999");
+    initial_plan.note = Some("Inspect, implement, verify, and report the change".into());
+    initial_plan.estimated_remaining_work_secs = Some(100.0);
+    initial_plan.plan_complete = true;
+    manager
+        .checkpoint(initial_plan)
+        .expect("benchmark plan checkpoint succeeds");
+
+    c.bench_function("checkpoint_core_10k_active_tasks", |bench| {
+        bench.iter(|| {
+            black_box(
+                manager
+                    .checkpoint(CheckpointRequest::new("bench-9999"))
+                    .expect("benchmark checkpoint"),
             )
         });
     });
@@ -305,6 +333,7 @@ criterion_group!(
     benches,
     tick_core_10k,
     tick_core_10k_active_tasks,
+    checkpoint_core_10k_active_tasks,
     action_lease_register_consume_10k,
     action_lease_consume_10k,
     action_lease_register_10k,
