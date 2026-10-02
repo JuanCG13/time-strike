@@ -1,9 +1,7 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 use time_strike::enforcement::{ActionLeaseGrant, ActionLeaseLedger};
-use time_strike::{
-    CheckpointRequest, ManualClock, StartTaskRequest, TaskManager, TickRequest,
-};
+use time_strike::{CheckpointRequest, ManualClock, StartTaskRequest, TaskManager, TickRequest};
 
 fn tick_core_10k(c: &mut Criterion) {
     let clock = ManualClock::new();
