@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.23:** maintainers can benchmark `tick` with 10,000 active tasks while excluding registry setup from the timed path, making core lookup regressions visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0223---2026-10-01).
+**v0.2.24:** maintainers can benchmark a planning-state `checkpoint` with 10,000 active tasks while excluding registry and initial-plan setup from the timed path, making scale regressions in checkpoint updates visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0224---2026-10-02).
 
 ## Features
 
