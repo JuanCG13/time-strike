@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.24:** maintainers can benchmark a planning-state `checkpoint` with 10,000 active tasks while excluding registry and initial-plan setup from the timed path, making scale regressions in checkpoint updates visible without changing runtime behavior. See the [changelog](CHANGELOG.md#0224---2026-10-02).
+**v0.2.25:** CI now rejects releases when Cargo metadata, MCP metadata, README, or CHANGELOG disagree on the version, preventing incomplete version publication before the Rust build starts. See the [changelog](CHANGELOG.md#0225---2026-10-03).
 
 ## Features
 
