@@ -78,9 +78,7 @@ fn adjust_core_10k_active_tasks(c: &mut Criterion) {
         bench.iter(|| {
             black_box(
                 manager
-                    .adjust_task(
-                        AdjustTaskRequest::new("bench-9999").with_mode(Mode::Deadline),
-                    )
+                    .adjust_task(AdjustTaskRequest::new("bench-9999").with_mode(Mode::Deadline))
                     .expect("benchmark adjustment"),
             )
         });
