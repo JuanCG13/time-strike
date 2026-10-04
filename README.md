@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.25:** CI now rejects releases when Cargo metadata, MCP metadata, README, or CHANGELOG disagree on the version, preventing incomplete version publication before the Rust build starts. See the [changelog](CHANGELOG.md#0225---2026-10-03).
+**v0.2.26:** Criterion now measures a mode-only `adjust_task` with 10,000 active tasks prepared outside the timed path, exposing registry-size regressions in task reconfiguration. See the [changelog](CHANGELOG.md#0226---2026-10-04).
 
 ## Features
 
@@ -255,7 +255,7 @@ python tests/benchmark_tools.py
 python tests/benchmark_transport.py
 ```
 
-A prior local 10,000-operation baseline measured the core policy at approximately 1.48 µs mean and local MCP stdio `tick` at approximately 75.87 µs mean. Treat these as development-host reference numbers, not a performance guarantee; hardware, Rust, OS scheduling, and client framing affect results. Criterion benchmarks are in [`benches/tick.rs`](benches/tick.rs). The `action_lease_register_10k_pending`, `action_lease_consume_10k_pending`, `action_lease_revoke_all_10k_pending`, `action_lease_revoke_lease_10k_pending`, and `action_lease_revoke_task_10k_pending` benchmarks prepare 10,000 pending leases outside the timed path, then measure only new authority admission, successful dispatch authorization, or the global, single-lease, and task-scoped cancellation barriers.
+A prior local 10,000-operation baseline measured the core policy at approximately 1.48 µs mean and local MCP stdio `tick` at approximately 75.87 µs mean. Treat these as development-host reference numbers, not a performance guarantee; hardware, Rust, OS scheduling, and client framing affect results. Criterion benchmarks are in [`benches/tick.rs`](benches/tick.rs). The active-task benchmarks prepare 10,000 tasks outside the timed path before measuring one `tick`, `checkpoint`, or mode-only `adjust_task`. The `action_lease_register_10k_pending`, `action_lease_consume_10k_pending`, `action_lease_revoke_all_10k_pending`, `action_lease_revoke_lease_10k_pending`, and `action_lease_revoke_task_10k_pending` benchmarks likewise prepare 10,000 pending leases before measuring only new authority admission, successful dispatch authorization, or the global, single-lease, and task-scoped cancellation barriers.
 
 ## Contributing
 
