@@ -22,6 +22,30 @@ fn tick_core_10k(c: &mut Criterion) {
     });
 }
 
+fn start_core_10k_active_tasks(c: &mut Criterion) {
+    c.bench_function("start_core_10k_active_tasks", |bench| {
+        bench.iter_batched(
+            || {
+                let manager = TaskManager::new(ManualClock::new());
+                for index in 0..10_000 {
+                    manager
+                        .start_task(StartTaskRequest::new(format!("bench-{index}"), 1_000.0))
+                        .expect("benchmark task starts");
+                }
+                manager
+            },
+            |manager| {
+                black_box(
+                    manager
+                        .start_task(StartTaskRequest::new("bench-10000", 1_000.0))
+                        .expect("benchmark task starts at scale"),
+                )
+            },
+            BatchSize::LargeInput,
+        );
+    });
+}
+
 fn tick_core_10k_active_tasks(c: &mut Criterion) {
     let manager = TaskManager::new(ManualClock::new());
     for index in 0..10_000 {
@@ -377,6 +401,7 @@ criterion_group!(
     benches,
     tick_core_10k,
     tick_core_10k_active_tasks,
+    start_core_10k_active_tasks,
     checkpoint_core_10k_active_tasks,
     adjust_core_10k_active_tasks,
     finish_core_10k_active_tasks,
