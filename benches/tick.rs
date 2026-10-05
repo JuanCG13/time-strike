@@ -2,8 +2,8 @@ use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main
 use std::time::Duration;
 use time_strike::enforcement::{ActionLeaseGrant, ActionLeaseLedger};
 use time_strike::{
-    AdjustTaskRequest, CheckpointRequest, ManualClock, Mode, StartTaskRequest, TaskManager,
-    TickRequest,
+    AdjustTaskRequest, CheckpointRequest, FinishTaskRequest, ManualClock, Mode, StartTaskRequest,
+    TaskManager, TickRequest,
 };
 
 fn tick_core_10k(c: &mut Criterion) {
@@ -82,6 +82,30 @@ fn adjust_core_10k_active_tasks(c: &mut Criterion) {
                     .expect("benchmark adjustment"),
             )
         });
+    });
+}
+
+fn finish_core_10k_active_tasks(c: &mut Criterion) {
+    c.bench_function("finish_core_10k_active_tasks", |bench| {
+        bench.iter_batched(
+            || {
+                let manager = TaskManager::new(ManualClock::new());
+                for index in 0..10_000 {
+                    manager
+                        .start_task(StartTaskRequest::new(format!("bench-{index}"), 1_000.0))
+                        .expect("benchmark task starts");
+                }
+                manager
+            },
+            |manager| {
+                black_box(
+                    manager
+                        .finish_task(FinishTaskRequest::new("bench-9999"))
+                        .expect("benchmark task finishes"),
+                )
+            },
+            BatchSize::LargeInput,
+        );
     });
 }
 
@@ -355,6 +379,7 @@ criterion_group!(
     tick_core_10k_active_tasks,
     checkpoint_core_10k_active_tasks,
     adjust_core_10k_active_tasks,
+    finish_core_10k_active_tasks,
     action_lease_register_consume_10k,
     action_lease_consume_10k,
     action_lease_register_10k,
