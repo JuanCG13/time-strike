@@ -133,6 +133,19 @@ fn finish_core_10k_active_tasks(c: &mut Criterion) {
     });
 }
 
+fn snapshot_core_10k_active_tasks(c: &mut Criterion) {
+    let manager = TaskManager::new(ManualClock::new());
+    for index in 0..10_000 {
+        manager
+            .start_task(StartTaskRequest::new(format!("bench-{index}"), 1_000.0))
+            .expect("benchmark task starts");
+    }
+
+    c.bench_function("snapshot_core_10k_active_tasks", |bench| {
+        bench.iter(|| black_box(manager.snapshot()));
+    });
+}
+
 fn action_lease_register_consume_10k(c: &mut Criterion) {
     c.bench_function("action_lease_register_consume_10k", |bench| {
         bench.iter_batched(
@@ -405,6 +418,7 @@ criterion_group!(
     checkpoint_core_10k_active_tasks,
     adjust_core_10k_active_tasks,
     finish_core_10k_active_tasks,
+    snapshot_core_10k_active_tasks,
     action_lease_register_consume_10k,
     action_lease_consume_10k,
     action_lease_register_10k,
