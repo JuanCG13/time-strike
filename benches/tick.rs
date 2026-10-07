@@ -1,9 +1,10 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use std::sync::Arc;
 use std::time::Duration;
 use time_strike::enforcement::{ActionLeaseGrant, ActionLeaseLedger};
 use time_strike::{
-    AdjustTaskRequest, CheckpointRequest, FinishTaskRequest, ManualClock, Mode, StartTaskRequest,
-    TaskManager, TickRequest,
+    AdjustTaskRequest, CheckpointRequest, FinishTaskRequest, ManualClock, MemoryStore, Mode,
+    SnapshotStore, StartTaskRequest, TaskManager, TickRequest,
 };
 
 fn tick_core_10k(c: &mut Criterion) {
@@ -143,6 +144,28 @@ fn snapshot_core_10k_active_tasks(c: &mut Criterion) {
 
     c.bench_function("snapshot_core_10k_active_tasks", |bench| {
         bench.iter(|| black_box(manager.snapshot()));
+    });
+}
+
+fn recover_core_10k_active_tasks(c: &mut Criterion) {
+    let source = TaskManager::new(ManualClock::new());
+    for index in 0..10_000 {
+        source
+            .start_task(StartTaskRequest::new(format!("bench-{index}"), 1_000.0))
+            .expect("benchmark task starts");
+    }
+    let store = Arc::new(MemoryStore::new());
+    store
+        .save(&source.snapshot())
+        .expect("benchmark snapshot saves");
+
+    c.bench_function("recover_core_10k_active_tasks", |bench| {
+        bench.iter(|| {
+            let manager = TaskManager::with_store(ManualClock::new(), Arc::clone(&store))
+                .expect("benchmark snapshot recovers");
+            assert_eq!(manager.task_count(), 10_000);
+            black_box(manager);
+        });
     });
 }
 
@@ -419,6 +442,7 @@ criterion_group!(
     adjust_core_10k_active_tasks,
     finish_core_10k_active_tasks,
     snapshot_core_10k_active_tasks,
+    recover_core_10k_active_tasks,
     action_lease_register_consume_10k,
     action_lease_consume_10k,
     action_lease_register_10k,
