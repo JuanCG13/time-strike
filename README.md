@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.30:** Criterion now measures recovery of 10,000 active tasks from an in-memory snapshot prepared outside the timed path, exposing registry-size regressions in snapshot validation and registry reconstruction. See the [changelog](CHANGELOG.md#0230---2026-10-07).
+**v0.2.31:** Criterion now measures `list_tasks` with 10,000 active tasks prepared outside the timed path, exposing registry-size regressions in task projection and deterministic ordering. See the [changelog](CHANGELOG.md#0231---2026-10-10).
 
 ## Features
 
