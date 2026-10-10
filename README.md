@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.31:** Criterion now measures `list_tasks` with 10,000 active tasks prepared outside the timed path, exposing registry-size regressions in task projection and deterministic ordering. See the [changelog](CHANGELOG.md#0231---2026-10-10).
+**v0.2.32:** Criterion now measures rejection of a replayed action lease after preparing 10,000 consumed leases, exposing scale-dependent regressions in one-shot host authorization without changing runtime behavior. See the [changelog](CHANGELOG.md#0232---2026-10-10).
 
 ## Features
 
