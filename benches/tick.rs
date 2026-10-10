@@ -1,7 +1,7 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use std::sync::Arc;
 use std::time::Duration;
-use time_strike::enforcement::{ActionLeaseGrant, ActionLeaseLedger};
+use time_strike::enforcement::{ActionLeaseError, ActionLeaseGrant, ActionLeaseLedger};
 use time_strike::{
     AdjustTaskRequest, CheckpointRequest, FinishTaskRequest, ManualClock, MemoryStore, Mode,
     SnapshotStore, StartTaskRequest, TaskManager, TickRequest,
@@ -279,6 +279,64 @@ fn action_lease_consume_10k(c: &mut Criterion) {
     });
 }
 
+fn action_lease_replay_rejection_10k(c: &mut Criterion) {
+    c.bench_function("action_lease_replay_rejection_10k_consumed", |bench| {
+        bench.iter_batched(
+            || {
+                let ledger = ActionLeaseLedger::new(Duration::from_secs(100));
+                for index in 0..10_000 {
+                    let task_id = format!("bench-{index}");
+                    let grant = ActionLeaseGrant {
+                        lease_id: format!("lease-{index}"),
+                        task_id: task_id.clone(),
+                        action: "benchmark action".into(),
+                        duration_seconds: 0.000_001,
+                        expires_in_seconds: 1.0,
+                        expiry_anchor: "tick_request_started".into(),
+                        one_shot: true,
+                    };
+                    let request_started = Duration::from_micros(
+                        u64::try_from(index).expect("10k benchmark index fits in u64"),
+                    );
+                    ledger
+                        .register(
+                            request_started,
+                            &task_id,
+                            "benchmark action",
+                            0.000_001,
+                            &grant,
+                        )
+                        .expect("benchmark lease registers");
+                    ledger
+                        .consume(
+                            &grant.lease_id,
+                            &task_id,
+                            "benchmark action",
+                            0.000_001,
+                            request_started,
+                        )
+                        .expect("benchmark lease consumes");
+                }
+                ledger
+            },
+            |ledger| {
+                assert_eq!(
+                    ledger.consume(
+                        "lease-9999",
+                        "bench-9999",
+                        "benchmark action",
+                        0.000_001,
+                        Duration::from_micros(9_999),
+                    ),
+                    Err(ActionLeaseError::AlreadyConsumed)
+                );
+                black_box(ledger);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+}
+
 fn action_lease_register_10k(c: &mut Criterion) {
     c.bench_function("action_lease_register_10k_pending", |bench| {
         bench.iter_batched_ref(
@@ -463,6 +521,7 @@ criterion_group!(
     recover_core_10k_active_tasks,
     action_lease_register_consume_10k,
     action_lease_consume_10k,
+    action_lease_replay_rejection_10k,
     action_lease_register_10k,
     action_lease_revoke_all_10k,
     action_lease_revoke_lease_10k,
