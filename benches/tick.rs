@@ -469,6 +469,48 @@ fn action_lease_revoke_lease_10k(c: &mut Criterion) {
     });
 }
 
+fn action_lease_revoked_task_registration_rejection_10k(c: &mut Criterion) {
+    c.bench_function(
+        "action_lease_register_rejected_10k_revoked_tasks",
+        |bench| {
+            bench.iter_batched(
+                || {
+                    let ledger = ActionLeaseLedger::new(Duration::from_secs(100));
+                    for index in 0..10_000 {
+                        ledger
+                            .revoke_task(&format!("bench-{index}"))
+                            .expect("benchmark task revokes");
+                    }
+                    let grant = ActionLeaseGrant {
+                        lease_id: "delayed-9999".into(),
+                        task_id: "bench-9999".into(),
+                        action: "benchmark action".into(),
+                        duration_seconds: 0.000_001,
+                        expires_in_seconds: 1.0,
+                        expiry_anchor: "tick_request_started".into(),
+                        one_shot: true,
+                    };
+                    (ledger, grant)
+                },
+                |(ledger, grant)| {
+                    assert_eq!(
+                        ledger.register(
+                            Duration::from_secs(1),
+                            "bench-9999",
+                            "benchmark action",
+                            0.000_001,
+                            &grant,
+                        ),
+                        Err(ActionLeaseError::Superseded)
+                    );
+                    black_box((ledger, grant));
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
+}
+
 fn action_lease_revoke_task_10k(c: &mut Criterion) {
     c.bench_function("action_lease_revoke_task_10k_pending", |bench| {
         bench.iter_batched(
@@ -525,6 +567,7 @@ criterion_group!(
     action_lease_register_10k,
     action_lease_revoke_all_10k,
     action_lease_revoke_lease_10k,
-    action_lease_revoke_task_10k
+    action_lease_revoke_task_10k,
+    action_lease_revoked_task_registration_rejection_10k
 );
 criterion_main!(benches);
