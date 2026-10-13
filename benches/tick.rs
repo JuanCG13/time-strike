@@ -651,6 +651,61 @@ fn action_lease_revoked_lease_consume_rejection_10k(c: &mut Criterion) {
     });
 }
 
+fn action_lease_stale_response_registration_rejection_10k(c: &mut Criterion) {
+    c.bench_function("action_lease_register_rejected_10k_stale_response", |bench| {
+        bench.iter_batched(
+            || {
+                let ledger = ActionLeaseLedger::new(Duration::from_secs(100));
+                for index in 0..10_000 {
+                    let task_id = format!("bench-{index}");
+                    let grant = ActionLeaseGrant {
+                        lease_id: format!("newer-{index}"),
+                        task_id: task_id.clone(),
+                        action: "benchmark action".into(),
+                        duration_seconds: 0.000_001,
+                        expires_in_seconds: 1.0,
+                        expiry_anchor: "tick_request_started".into(),
+                        one_shot: true,
+                    };
+                    ledger
+                        .register(
+                            Duration::from_secs(1),
+                            &task_id,
+                            "benchmark action",
+                            0.000_001,
+                            &grant,
+                        )
+                        .expect("newer benchmark response registers");
+                }
+                let stale = ActionLeaseGrant {
+                    lease_id: "older-9999".into(),
+                    task_id: "bench-9999".into(),
+                    action: "stale benchmark action".into(),
+                    duration_seconds: 0.000_001,
+                    expires_in_seconds: 1.0,
+                    expiry_anchor: "tick_request_started".into(),
+                    one_shot: true,
+                };
+                (ledger, stale)
+            },
+            |(ledger, stale)| {
+                assert_eq!(
+                    ledger.register(
+                        Duration::ZERO,
+                        "bench-9999",
+                        "stale benchmark action",
+                        0.000_001,
+                        &stale,
+                    ),
+                    Err(ActionLeaseError::Superseded)
+                );
+                black_box((ledger, stale));
+            },
+            BatchSize::LargeInput,
+        );
+    });
+}
+
 criterion_group!(
     benches,
     tick_core_10k,
@@ -671,6 +726,7 @@ criterion_group!(
     action_lease_revoke_task_10k,
     action_lease_revoked_task_registration_rejection_10k,
     action_lease_global_revocation_consume_rejection_10k,
-    action_lease_revoked_lease_consume_rejection_10k
+    action_lease_revoked_lease_consume_rejection_10k,
+    action_lease_stale_response_registration_rejection_10k
 );
 criterion_main!(benches);
