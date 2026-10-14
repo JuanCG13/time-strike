@@ -711,7 +711,7 @@ fn action_lease_stale_response_registration_rejection_10k(c: &mut Criterion) {
 
 fn action_lease_revoked_task_consume_rejection_10k(c: &mut Criterion) {
     c.bench_function("action_lease_consume_rejected_10k_revoked_task", |bench| {
-        bench.iter_batched(
+        bench.iter_batched_ref(
             || {
                 let ledger = ActionLeaseLedger::new(Duration::from_secs(100));
                 for index in 0..10_000 {
