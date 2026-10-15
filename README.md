@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.37:** Criterion now measures rejection of an action-lease consume attempt after preparing 10,000 pending leases and revoking one target task, exposing scale-dependent regressions in task-scoped host cancellation without changing runtime behavior. See the [changelog](CHANGELOG.md#0237---2026-10-14).
+**v0.2.38:** Criterion now measures rejection of a delayed action-lease registration after preparing 10,000 pending leases and globally revoking the ledger, exposing scale-dependent regressions that could restore authority after connection shutdown without changing runtime behavior. See the [changelog](CHANGELOG.md#0238---2026-10-15).
 
 ## Features
 
