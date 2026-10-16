@@ -712,6 +712,68 @@ fn action_lease_revoked_lease_consume_rejection_10k(c: &mut Criterion) {
     });
 }
 
+fn action_lease_revoked_lease_registration_rejection_10k(c: &mut Criterion) {
+    c.bench_function(
+        "action_lease_register_rejected_10k_revoked_lease",
+        |bench| {
+            bench.iter_batched_ref(
+                || {
+                    let ledger = ActionLeaseLedger::new(Duration::from_secs(100));
+                    for index in 0..10_000 {
+                        let task_id = format!("bench-{index}");
+                        let grant = ActionLeaseGrant {
+                            lease_id: format!("lease-{index}"),
+                            task_id: task_id.clone(),
+                            action: "benchmark action".into(),
+                            duration_seconds: 0.000_001,
+                            expires_in_seconds: 1.0,
+                            expiry_anchor: "tick_request_started".into(),
+                            one_shot: true,
+                        };
+                        ledger
+                            .register(
+                                Duration::ZERO,
+                                &task_id,
+                                "benchmark action",
+                                0.000_001,
+                                &grant,
+                            )
+                            .expect("benchmark lease registers");
+                    }
+                    ledger
+                        .revoke_lease("lease-9999")
+                        .expect("benchmark lease revokes");
+                    let replay = ActionLeaseGrant {
+                        lease_id: "lease-9999".into(),
+                        task_id: "bench-9999".into(),
+                        action: "benchmark action".into(),
+                        duration_seconds: 0.000_001,
+                        expires_in_seconds: 1.0,
+                        expiry_anchor: "tick_request_started".into(),
+                        one_shot: true,
+                    };
+                    (ledger, replay)
+                },
+                |(ledger, replay)| {
+                    assert_eq!(
+                        ledger.register(
+                            Duration::from_secs(1),
+                            "bench-9999",
+                            "benchmark action",
+                            0.000_001,
+                            replay,
+                        ),
+                        Err(ActionLeaseError::DuplicateLease)
+                    );
+                    black_box(ledger);
+                    black_box(replay);
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
+}
+
 fn action_lease_stale_response_registration_rejection_10k(c: &mut Criterion) {
     c.bench_function(
         "action_lease_register_rejected_10k_stale_response",
@@ -841,6 +903,7 @@ criterion_group!(
     action_lease_global_revocation_consume_rejection_10k,
     action_lease_global_revocation_registration_rejection_10k,
     action_lease_revoked_lease_consume_rejection_10k,
+    action_lease_revoked_lease_registration_rejection_10k,
     action_lease_stale_response_registration_rejection_10k,
     action_lease_revoked_task_consume_rejection_10k
 );

@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.38:** Criterion now measures rejection of a delayed action-lease registration after preparing 10,000 pending leases and globally revoking the ledger, exposing scale-dependent regressions that could restore authority after connection shutdown without changing runtime behavior. See the [changelog](CHANGELOG.md#0238---2026-10-15).
+**v0.2.39:** Criterion now measures rejection when a revoked action-lease ID is registered again after preparing 10,000 leases, exposing scale-dependent regressions that could restore individually cancelled authority without changing runtime behavior. See the [changelog](CHANGELOG.md#0239---2026-10-16).
 
 ## Features
 
