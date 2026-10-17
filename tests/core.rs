@@ -2,10 +2,10 @@ use std::sync::{
     Arc, Condvar, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time_strike::{
     AdjustTaskRequest, CheckpointRequest, FileStore, FinishTaskRequest, ManualClock, MemoryStore,
-    Mode, PersistedState, Schedule, SchedulePhase, SnapshotStore, StartTaskRequest, TaskError,
+    Mode, PersistedState, PersistedTask, Schedule, SchedulePhase, SnapshotStore, StartTaskRequest, TaskError,
     TaskManager, TaskStatus, TickRequest,
 };
 
@@ -741,6 +741,51 @@ fn finished_overrun_survives_recovery() {
     assert!((timing.accounted_elapsed_secs - 10.0).abs() < 1e-9);
     assert!((timing.overrun_secs - 4.0).abs() < 1e-9);
     assert!(!timing.deadline_met);
+}
+
+#[test]
+fn recovery_rejects_parent_overcommitted_by_active_child_reservations() {
+    let saved_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let persisted_task = |task_id: &str, parent_id: Option<&str>, budget_secs: f64| {
+        PersistedTask {
+            task_id: task_id.to_owned(),
+            parent_id: parent_id.map(str::to_owned),
+            budget_secs,
+            mode: Mode::Balanced,
+            schedule: Schedule::default(),
+            metadata: std::collections::HashMap::new(),
+            status: TaskStatus::Active,
+            elapsed_secs: 0.0,
+            ticks: 0,
+            checkpoints: 0,
+            last_checkpoint: None,
+            plan_submitted: false,
+        }
+    };
+    let snapshot = PersistedState {
+        version: 2,
+        saved_at_unix_ms,
+        tasks: vec![
+            persisted_task("parent", None, 5.0),
+            persisted_task("child-a", Some("parent"), 3.0),
+            persisted_task("child-b", Some("parent"), 3.0),
+        ],
+    };
+    let store = Arc::new(MemoryStore::new());
+    store.save(&snapshot).unwrap();
+
+    let error = match TaskManager::with_store(ManualClock::new(), store) {
+        Err(error) => error,
+        Ok(_) => panic!("overcommitted persisted child reservations must be rejected"),
+    };
+    assert!(matches!(
+        error,
+        TaskError::CorruptSnapshot(message)
+            if message.contains("active child reservations exceed parent budget for parent")
+    ));
 }
 
 #[test]

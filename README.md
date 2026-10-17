@@ -6,7 +6,7 @@ Time Strike is deliberately local-first: it does not run an LLM, make network re
 
 ## Latest changes
 
-**v0.2.39:** Criterion now measures rejection when a revoked action-lease ID is registered again after preparing 10,000 leases, exposing scale-dependent regressions that could restore individually cancelled authority without changing runtime behavior. See the [changelog](CHANGELOG.md#0239---2026-10-16).
+**v0.2.40:** Recovery now rejects persisted snapshots whose active child reservations exceed a parent's total budget, preventing corrupted state from restoring impossible delegated authority. See the [changelog](CHANGELOG.md#0240---2026-10-17).
 
 ## Features
 

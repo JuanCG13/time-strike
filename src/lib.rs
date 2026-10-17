@@ -1455,6 +1455,13 @@ impl TaskManager {
                 }
             }
         }
+        for (task_id, task) in &restored {
+            if task.child_reserved_secs > task.budget_secs + EPSILON {
+                return Err(TaskError::CorruptSnapshot(format!(
+                    "active child reservations exceed parent budget for {task_id}"
+                )));
+            }
+        }
         validate_no_cycles(&restored)?;
         *self.tasks.write().expect("task lock poisoned") = restored;
         Ok(())
